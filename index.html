@@ -1161,7 +1161,7 @@ STAGES.forEach((st, i) => {
   st.targetAnts = Math.min(30, 14 + Math.floor(i * 0.35));
 });
 // 자동 테스트에서 막힌 스테이지는 개미 순서를 다른 시드로 다시 만든다 (스테이지 번호-1 : 시드)
-const SEED_FIX = { 3: 1, 8: 1, 21: 1, 29: 2, 37: 1, 42: 1, 44: 3, 49: 1, 50: 2 };
+const SEED_FIX = { 3: 1, 21: 1, 29: 2, 37: 1, 42: 1, 44: 3, 49: 1, 50: 2 };
 function stageGrid(i) {
   const st = STAGES[i];
   if (!st.grid) st.grid = st.src.type === 'pixel' ? processPixel(st.src.art) : processPaint(st.src.def);
@@ -1418,21 +1418,21 @@ const SPR = {
   // 쇠똥구리 옆모습 (오른쪽을 봄): 걸어가기 2프레임
   beetleWalk0: [
     '....oooooo.....',
-    '..oobbbhhhboo..',
-    '.obbbbbbbhhbbo.',
-    'obbbbbbbbbbboo.',
-    'obbbbbbbbbboebo',
-    '.obbbbbbbbobbbo',
+    '..oobbbohhboo..',
+    '.obbbbbobhhbbo.',
+    'obbbbbbobboboo.',
+    'obbbbbbobbboebo',
+    '.obbbbbobbobbbo',
     '..ooooooooooooo',
     '..o.o..o.o..o..',
     '.o..o.o..o.o...'],
   beetleWalk1: [
     '....oooooo.....',
-    '..oobbbhhhboo..',
-    '.obbbbbbbhhbbo.',
-    'obbbbbbbbbbboo.',
-    'obbbbbbbbbboebo',
-    '.obbbbbbbbobbbo',
+    '..oobbbohhboo..',
+    '.obbbbbobhhbbo.',
+    'obbbbbbobboboo.',
+    'obbbbbbobbboebo',
+    '.obbbbbobbobbbo',
     '..ooooooooooooo',
     '...o.o..o.o.o..',
     '..o..o.o..o..o.'],
@@ -1446,10 +1446,10 @@ const SPR = {
     '...obhhbbbbo.',
     '...obhbbbbbo.',
     '..obhbbbbbo..',
-    '..obbbbbbbo..',
+    '..ooooooooo..',
     '.obbbbbbbo...',
-    '.obebbooo....',
-    'obbbbo.o.o...',
+    '.obeboooo....',
+    'obbboo.o.o...',
     'ooooo.o...o..',
     '......o....o.'],
   beetlePush1: [
@@ -1461,10 +1461,10 @@ const SPR = {
     '...obhhbbbbo.',
     '...obhbbbbbo.',
     '..obhbbbbbo..',
-    '..obbbbbbbo..',
+    '..ooooooooo..',
     '.obbbbbbbo...',
-    '.obebbooo....',
-    'obbbbo.o.o...',
+    '.obeboooo....',
+    'obbboo.o.o...',
     'ooooo..o.o...',
     '.....o.....o.'],
   // 위에서 본 쇠똥구리 (위를 봄): 톱니 머리 방패, 둥근 날개딱지, 가시 다리
@@ -1939,8 +1939,6 @@ function toast(text) {
 const ITEMS = {
   speed:   { icon: '⚡', name: '질주!',     desc: '쇠똥구리가 2배 빨라져요', color: '#ffd84a',
              guide: ['일꾼 쇠똥구리가 모두 2배 빠르게 걸어요.', '음식을 더 빨리 날라 와요.'], time: '8초', where: '모든 모드' },
-  swarm:   { icon: '★', name: '총출동!',   desc: '쇠똥구리가 3배 자주 나와요', color: '#5cc45a',
-             guide: ['일터의 집에서 쇠똥구리가 3배 자주 나와요.', '일터 칸이 빨리 비어요.'], time: '8초', where: '모든 모드' },
   unchain: { icon: '✂', name: '사슬 끊기!', desc: '모든 사슬이 풀렸어요', color: '#bfe6ff',
              guide: ['대기열의 사슬이 전부 풀려요.', '묶여 있던 쇠똥구리도 하나씩 고를 수 있어요.'], time: '즉시', where: '모든 모드' },
   slow:    { icon: '🐌', name: '방해!',     desc: '상대 쇠똥구리가 느려져요', color: '#ff8fbf',
@@ -1948,7 +1946,7 @@ const ITEMS = {
   bomb:    { icon: '💣', name: '폭탄!',     desc: '주변 3×3 음식이 한 번에 없어져요', color: '#ffb070',
              guide: ['집은 자리 주변 3×3 칸의 음식이 펑! 사라져요.', '사라진 만큼 대기 쇠똥구리 숫자도 줄어요.'], time: '즉시', where: '모든 모드' },
 };
-const ITEM_ORDER = ['speed', 'swarm', 'unchain', 'bomb', 'slow'];
+const ITEM_ORDER = ['speed', 'unchain', 'bomb', 'slow'];
 let itemsBack = null;   // 아이템 도감을 닫으면 돌아갈 화면
 function openItems(from) { itemsBack = from; overlay = 'items'; }
 // 아이템 도감: 어떤 아이템이 있고 무슨 효과인지
@@ -1979,7 +1977,7 @@ function placeItems(g, idx) {
   const cells = [];
   g.grid.forEach((row, r) => row.forEach((v, c) => { if (v) cells.push(r * g.C + c); }));
   const n = Math.min(9, 3 + Math.floor(idx / 8));
-  const types = mode === 'versus' ? ['speed', 'swarm', 'unchain', 'bomb', 'slow', 'slow'] : ['speed', 'swarm', 'unchain', 'bomb'];
+  const types = mode === 'versus' ? ['speed', 'unchain', 'bomb', 'slow', 'slow'] : ['speed', 'unchain', 'bomb'];
   g.items = new Map();
   for (let i = 0; i < n && cells.length; i++) {
     const k = cells.splice(Math.floor(rng() * cells.length), 1)[0];
@@ -1989,7 +1987,6 @@ function placeItems(g, idx) {
 // 아이템은 쇠똥구리가 음식을 "집는 순간" 그 자리에서 발동 (어디서 나왔는지 보이게)
 function activateItem(type, x, y, r, c) {
   if (type === 'speed') game.fx.speed = 8;
-  else if (type === 'swarm') game.fx.swarm = 8;
   else if (type === 'unchain') game.queues.flat().forEach(a => a.group = null);
   else if (type === 'bomb') bombAt(r, c);
   else if (type === 'slow') {
@@ -2321,11 +2318,13 @@ function trackParam(T, x, y) {
   return 2 * w + h + (T.y1 - y);
 }
 // a에서 b까지 네모 길을 따라 (짧은 쪽으로) 가는 꺾임점들. b 포함
-function along(T, a, b) {
+// force: 1(시계 방향) / -1(반시계)로 방향을 정할 수 있음. 없으면 짧은 쪽
+function along(T, a, b, force = 0) {
   const w = T.x1 - T.x0, h = T.y1 - T.y0, P = 2 * w + 2 * h;
   const ta = trackParam(T, a.x, a.y), tb = trackParam(T, b.x, b.y);
   let d = ((tb - ta) % P + P) % P, dir = 1;
-  if (d > P / 2) { d = P - d; dir = -1; }
+  if (force) { dir = force; if (dir < 0) d = (P - d) % P; }
+  else if (d > P / 2) { d = P - d; dir = -1; }
   const corners = [[0, T.x0, T.y0], [w, T.x1, T.y0], [w + h, T.x1, T.y1], [2 * w + h, T.x0, T.y1]];
   const pts = corners
     .map(([t, x, y]) => ({ dd: dir > 0 ? ((t - ta) % P + P) % P : ((ta - t) % P + P) % P, x, y }))
@@ -2400,9 +2399,20 @@ function simplify(pts) {
   }
   return out;
 }
+// 굴로 돌아가는 길: 양쪽 거리가 비슷하면(차이가 둘레의 1/4 이내) 쇠똥구리마다 왼쪽·오른쪽을 번갈아 골라
+// 한쪽으로 몰리지 않게 하고, 굴 앞에서도 들어오는 쪽(왼쪽/오른쪽)에 따라 자리를 나눠 들어감
 function backPath(cr) {
-  const T = game.T;
-  return simplify([...cr.inner.slice().reverse(), cr.E, ...along(T, cr.E, { x: HOLE.x, y: T.y1 }), { x: HOLE.x, y: HOLE.y }]);
+  const T = game.T, P = 2 * (T.x1 - T.x0) + 2 * (T.y1 - T.y0);
+  const Hp = { x: HOLE.x, y: T.y1 };
+  const cw = ((trackParam(T, Hp.x, Hp.y) - trackParam(T, cr.E.x, cr.E.y)) % P + P) % P;   // 시계 방향 거리
+  const ccw = (P - cw) % P;
+  let dir;
+  if (Math.abs(cw - ccw) < P * 0.25) dir = cr.id % 2 ? 1 : -1;   // 비슷하면 번갈아
+  else dir = cw <= ccw ? 1 : -1;
+  // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
+  const side = dir > 0 ? 1 : -1;
+  const entry = { x: HOLE.x + side * 12, y: T.y1 };
+  return simplify([...cr.inner.slice().reverse(), cr.E, ...along(T, cr.E, entry, dir), { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }]);
 }
 
 function findTarget(color, sx, sy) {
@@ -2523,6 +2533,31 @@ function update(dt) {
     if (mode === 'versus' && net.sendT >= 0.4) { net.sendT = 0; netSend({ t: 'prog', rem: game.remaining, total: game.total }); }
   }
 }
+const SAFE_EXIT = () => beetlePx() * 15 + 2;   // 집에서 막 나간 쇠똥구리가 이만큼 멀어져야 다음이 출발
+// 안전거리: 같은 방향으로 가는 앞 쇠똥구리와 SAFE보다 가까워지지 않게, 갈 수 있는 거리를 줄임
+// (마주 오는 쇠똥구리는 길 양쪽으로 비켜 지나가고, 목적지 바로 앞에서는 기다리지 않음)
+function roomAhead(cr, SAFE) {
+  const t = cr.pts[cr.i];
+  if (!t) return Infinity;
+  const fx = t.x - cr.x, fy = t.y - cr.y, fd = Math.hypot(fx, fy);
+  if (fd < 0.01) return Infinity;
+  const last = cr.pts[cr.pts.length - 1];
+  if (cr.i === cr.pts.length - 1 && fd < SAFE) return Infinity;   // 음식·굴 바로 앞
+  const ux = fx / fd, uy = fy / fd;
+  const nearHole = p => Math.hypot(p.x - HOLE.x, p.y - HOLE.y) < 30;
+  if (nearHole(cr) || Math.hypot(last.x - cr.x, last.y - cr.y) < SAFE) return Infinity;
+  let room = Infinity;
+  for (const o of game.carriers) {
+    if (o === cr || o.done || o.state !== cr.state || nearHole(o)) continue;   // 같은 일(가지러/굴려 오기)끼리만, 굴 입구는 예외
+    const ox = o.x - cr.x, oy = o.y - cr.y;
+    const ahead = ox * ux + oy * uy, side = Math.abs(ox * uy - oy * ux);
+    if (ahead <= 0 || ahead > SAFE * 2 || side > SAFE * 0.5) continue;
+    // 거의 같은 방향으로 가는 앞 쇠똥구리만 (마주 오거나 꺾어 나가는 건 그냥 지나감)
+    if (Math.cos(o.ang - cr.ang) < 0.85) continue;
+    room = Math.min(room, Math.max(0, ahead - SAFE));
+  }
+  return room;
+}
 // 화면 위치를 부드럽게 따라가는 부분 (방장·손님 공통)
 function animateLocal(dt) {
   if (game.toast) { game.toast.t -= dt; if (game.toast.t <= 0) game.toast = null; }
@@ -2563,6 +2598,8 @@ function updateGame(dt) {
       a.cool -= sdt;
       while (a.cool <= 0) {
         const h = homePos(s);
+        // 집 앞이 붐비면 잠깐 기다렸다가 출발 (길에 쇠똥구리가 너무 많이 몰리지 않게)
+        if (game.carriers.some(o => o.state === 'go' && Math.hypot(o.x - h.x, o.y - h.y) < SAFE_EXIT())) { a.cool = 0; return; }
         const t = findTarget(a.color, h.x, h.y);
         if (!t) { a.cool = 0; return; }
         game.reserved[t.r][t.c] = true;
@@ -2580,9 +2617,11 @@ function updateGame(dt) {
   }
 
   const mul = (game.fx.speed > 0 ? 2 : 1) * (game.fx.slow > 0 ? 0.5 : 1);
+  const SAFE = beetlePx() * 15 + 5;   // 앞 쇠똥구리와 지킬 거리 (몸길이 + 여유)
   for (const cr of game.carriers) {
     // 이번 프레임 중간에 출발한 쇠똥구리는 출발 후 지난 시간만큼만 움직임
     let step = SPEED * mul * (cr.lag !== undefined ? Math.min(cr.lag, sdt) : sdt);
+    step = Math.min(step, roomAhead(cr, SAFE));
     delete cr.lag;
     cr.walk += sdt * mul;
     if (cr.state === 'back' && Math.random() < Math.min(1, sdt * 4)) {
@@ -2842,7 +2881,7 @@ function drawPlay() {
 
   // 아이템 효과 표시
   let fy = PIC.y + 4;
-  for (const [f, it] of [['speed', ITEMS.speed], ['swarm', ITEMS.swarm], ['slow', ITEMS.slow]]) {
+  for (const [f, it] of [['speed', ITEMS.speed], ['slow', ITEMS.slow]]) {
     if (g.fx[f] <= 0) continue;
     const label = `${it.icon} ${f === 'slow' ? '느려짐' : it.name.replace('!', '')} ${Math.ceil(g.fx[f])}`;
     ctx.font = `12px ${FONT}`;
@@ -2928,6 +2967,10 @@ function drawPlay() {
     const vertical = Math.abs(uy) > Math.abs(ux);
     const face = ux >= 0 ? 1 : -1, flip = face < 0;
     const sv = uy < 0 ? -1 : 1;
+    // 차선: 진행 방향의 오른쪽으로 살짝 비켜 그려서, 마주 오는 쇠똥구리와 겹치지 않고 지나감
+    const lane = Math.max(3, BP * 3);
+    const lx = -uy * lane, ly = ux * lane;
+    cr.x += lx; cr.y += ly;
     ctx.fillStyle = 'rgba(40,25,10,.25)';
     if (cr.state === 'go') {
       if (vertical) {
@@ -2960,6 +3003,7 @@ function drawPlay() {
       }
       if (cr.item && Math.floor(time * 8) % 2) pxStar(cr.x + r, cr.y - r, 1, '#fff6a0');   // 아이템 든 음식은 반짝
     }
+    cr.x -= lx; cr.y -= ly;
   }
   for (const p of g.particles) {
     ctx.globalAlpha = Math.min(1, p.life * 2);
@@ -3036,28 +3080,19 @@ function drawClear() {
   const t = clearT, g = game;
   const last = g.idx === BASE_COUNT - 1, custom = g.idx >= BASE_COUNT;
   ctx.fillStyle = `rgba(30,18,40,${Math.min(0.85, t * 1.6)})`; ctx.fillRect(0, 0, W, H);
-  if (t > 0.2) drawRays(W / 2, 260, Math.min(0.25, (t - 0.2) * 0.5));
-  // 그림 틀이 커지며 고해상도 그림 등장
-  const asp = hiresAspect(g.idx);
-  let fw = 336, fh = fw / asp;
-  if (fh > 300) { fh = 300; fw = fh * asp; }
-  fw = Math.round(fw); fh = Math.round(fh);
-  const tx = (W - fw) / 2, ty = 110 + (300 - fh) / 2;
-  const k = Math.min(1, t / 0.75), e = easeBack(k);
-  const sx = g.gx, sy = g.gy, sw = g.C * g.cs, sh = g.R * g.cs;
-  const x = sx + (tx - sx) * e, y = sy + (ty - sy) * e, w = sw + (fw - sw) * e, h = sh + (fh - sh) * e;
-  pxBox(x - 12, y - 12 + 6, w + 24, h + 24, OUTLINE, OUTLINE, 4);
-  pxBox(x - 12, y - 12, w + 24, h + 24, '#e9b04a', OUTLINE, 4);
-  ctx.fillStyle = '#ffd77a'; ctx.fillRect(Math.round(x - 8), Math.round(y - 8), Math.round(w + 16), 3);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(x - 3), Math.round(y - 3), Math.round(w + 6), Math.round(h + 6));
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(hiresFor(g.idx, fw, fh), Math.round(x), Math.round(y), Math.round(w), Math.round(h));
-  ctx.imageSmoothingEnabled = false;
-  if (t < 0.35) { ctx.fillStyle = `rgba(255,255,255,${(0.35 - t) * 2.6})`; ctx.fillRect(x, y, w, h); }
-  if (t > 0.6) for (let i = 0; i < 8; i++) {
-    const a = i / 8 * PI * 2 + 0.3, rx = fw / 2 + 26, ry = fh / 2 + 26;
+  if (t > 0.2) drawRays(W / 2, 330, Math.min(0.25, (t - 0.2) * 0.5));
+  // 완성 그림 대신: 신난 쇠똥구리가 음식 공을 굴리며 축하 (반짝이 별이 둘레에서 깜빡)
+  const k = Math.min(1, t / 0.6), e = easeBack(k);
+  const bx = W / 2, byy = 340 - 30 * e;
+  const fr = Math.floor(time * 8) % 2;
+  ctx.globalAlpha = Math.min(1, k * 1.5);
+  drawFoodBall(bx + 22, byy + 6, 16, 'R', time * 4);
+  drawSprite('beetlePush' + fr, 'Y', 0, 4, bx - 26, byy, Math.min(1, k * 1.5));
+  ctx.globalAlpha = 1;
+  if (t > 0.5) for (let i = 0; i < 8; i++) {
+    const a = i / 8 * PI * 2 + 0.3;
     const tw = Math.sin(time * 6 + i * 1.7);
-    if (tw > -0.2) pxStar(W / 2 + Math.cos(a) * rx, ty + fh / 2 + Math.sin(a) * ry, tw > 0.5 ? 3 : 2, i % 2 ? '#fff6a0' : '#ffffff');
+    if (tw > -0.2) pxStar(bx + Math.cos(a) * 110, byy + Math.sin(a) * 80, tw > 0.5 ? 3 : 2, i % 2 ? '#fff6a0' : '#ffffff');
   }
   drawConfetti();
   if (t > 0.6) {
