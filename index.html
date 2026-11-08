@@ -773,7 +773,7 @@ const PAINT_ARTS = [
 ];
 
 // ================== 그림 처리: 확대 + 사물 테두리 + 바깥 테두리 ==================
-const MAX_C = 36, MAX_R = 30;   // 테두리 포함 최대 칸 수 (약 1000피스)
+const MAX_C = 28, MAX_R = 30;   // 테두리 포함 최대 칸 수 (음식 한 알 약 13px, 약 450피스)
 function parseArt(art) {
   const rows = art.length, cols = Math.max(...art.map(s => s.length));
   const g = [];
@@ -1161,7 +1161,7 @@ STAGES.forEach((st, i) => {
   st.targetAnts = Math.min(30, 14 + Math.floor(i * 0.35));
 });
 // 자동 테스트에서 막힌 스테이지는 개미 순서를 다른 시드로 다시 만든다 (스테이지 번호-1 : 시드)
-const SEED_FIX = { 3: 1, 8: 1, 21: 1, 22: 1, 29: 2, 37: 1, 42: 1, 44: 4, 50: 2 };
+const SEED_FIX = { 3: 1, 8: 1, 21: 1, 29: 2, 37: 1, 42: 1, 44: 3, 49: 1, 50: 2 };
 function stageGrid(i) {
   const st = STAGES[i];
   if (!st.grid) st.grid = st.src.type === 'pixel' ? processPixel(st.src.art) : processPaint(st.src.def);
@@ -1501,16 +1501,28 @@ const SPR = {
     'o.obbbobbbo.o',
     '...ooooooo...'],
 };
-// 도트 음식 구슬 (8x8)
-const BEAD = [
-  '..oooo..',
-  '.obbbbo.',
-  'obwhbbbo',
-  'obhbbbbo',
-  'obbbbbso',
-  'obbbbsso',
-  '.obssso.',
-  '..oooo..'];
+// 도트 음식 구슬 (16x16: 음식이 커져도 도트 하나는 작아서 부드럽게 보임)
+// o 가장자리, b 몸, h 밝은 쪽, s 그늘, w 반짝이
+const BEAD_N = 16;
+const BEAD = (() => {
+  const rows = [];
+  for (let y = 0; y < BEAD_N; y++) {
+    let row = '';
+    for (let x = 0; x < BEAD_N; x++) {
+      const px = (x + 0.5) / BEAD_N - 0.5, py = (y + 0.5) / BEAD_N - 0.5, d = Math.hypot(px, py);
+      if (d > 0.49) row += '.';
+      else if (d > 0.43) row += 'o';
+      else if (Math.hypot(px + 0.17, py + 0.19) < 0.08) row += 'w';
+      else {
+        const v = -(px + py) / 0.6;              // 왼쪽 위가 밝고 오른쪽 아래가 어두움
+        row += v > 0.42 ? 'h' : v < -0.42 ? 's' : 'b';
+      }
+    }
+    rows.push(row);
+  }
+  return rows;
+})();
+const beadCache = new Map();
 const spriteCache = new Map();
 function spriteColor(ch, color, name) {
   const b = COLORS[color], dark = color === 'D';
@@ -1568,30 +1580,107 @@ function drawSprite(name, color, dir, px, cx, cy, alpha = 1, flip = false) {
 }
 
 // 도트 음식 구슬: rot(0~3)만큼 90도씩 돌려 그리면 굴러가는 것처럼 보임
-function paintBead(c2, x, y, size, ch, rot = 0) {
+// 구슬 한 개를 실제 화면 픽셀 크기로 미리 그려 둠 (색·회전·크기별로 저장해서 빠르게 재사용)
+function beadCanvas(ch, rot, dev) {
+  const key = ch + '|' + rot + '|' + dev;
+  let cv = beadCache.get(key);
+  if (cv) return cv;
   const col = COLORS[ch], dark = ch === 'D';
   const pal = {
-    o: dark ? '#000000' : shade(col, -0.5),
+    // 음영은 은은하게 (음식이 커져도 테두리·그늘이 도드라지지 않게)
+    o: dark ? '#1a1722' : shade(col, -0.2),
     b: col,
-    h: dark ? '#4a4658' : shade(col, 0.35),
-    w: dark ? '#8a8499' : shade(col, 0.75),
-    s: dark ? '#14111a' : shade(col, -0.2),
+    h: dark ? '#3a3646' : shade(col, 0.2),
+    w: dark ? '#5e5a6c' : shade(col, 0.5),
+    s: dark ? '#221e2a' : shade(col, -0.08),
   };
-  const P = size / 8;
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    let rr = r, cc = c;
-    if (rot === 1) { rr = 7 - c; cc = r; } else if (rot === 2) { rr = 7 - r; cc = 7 - c; } else if (rot === 3) { rr = c; cc = 7 - r; }
-    const k = BEAD[rr][cc];
-    if (k === '.') continue;
-    c2.fillStyle = pal[k];
-    const x0 = Math.round(x + c * P), y0 = Math.round(y + r * P);
-    c2.fillRect(x0, y0, Math.round(x + (c + 1) * P) - x0, Math.round(y + (r + 1) * P) - y0);
+  cv = document.createElement('canvas');
+  cv.width = cv.height = Math.max(1, dev);
+  const g = cv.getContext('2d');
+  // 화면 픽셀 하나하나마다 정확한 원으로 계산 → 어떤 크기든 좌우·위아래가 똑같은 둥근 모양
+  for (let y = 0; y < dev; y++) for (let x = 0; x < dev; x++) {
+    let px = (x + 0.5) / dev - 0.5, py = (y + 0.5) / dev - 0.5;
+    if (rot === 1) [px, py] = [py, -px]; else if (rot === 2) [px, py] = [-px, -py]; else if (rot === 3) [px, py] = [-py, px];
+    const d = Math.hypot(px, py);
+    let k;
+    if (d > 0.48) continue;
+    else if (d > 0.41) k = 'o';
+    else if (Math.hypot(px + 0.16, py + 0.18) < 0.09) k = 'w';
+    else { const v = -(px + py) / 0.58; k = v > 0.42 ? 'h' : v < -0.42 ? 's' : 'b'; }
+    g.fillStyle = pal[k];
+    g.fillRect(x, y, 1, 1);
   }
+  beadCache.set(key, cv);
+  return cv;
+}
+// size는 그리는 쪽 좌표 기준. 실제 화면 픽셀 크기에 맞춰 구슬을 만들어 그려서 또렷하게
+function paintBead(c2, x, y, size, ch, rot = 0) {
+  const scale = c2.getTransform ? c2.getTransform().a : 1;
+  c2.drawImage(beadCanvas(ch, rot, Math.round(size * scale)), x, y, size, size);
 }
 // 굴러가는 음식 구슬 (굴러간 각도만큼 90도씩 돌아감)
 function drawFoodBall(x, y, r, ch, turn) {
   const rot = ((Math.floor(turn / (PI / 2)) % 4) + 4) % 4;
   paintBead(ctx, Math.round(x - r), Math.round(y - r), Math.round(r * 2), ch, rot);
+}
+// 그림 속 네모 음식 한 칸: 8x8 도트 무늬 (도트 계단과 알갱이가 보이는 픽셀 느낌)
+// h 위·왼쪽 빛, w 반짝이, b 몸, s 아래·오른쪽 그늘, O 모서리, d 어두운 알갱이, l 밝은 알갱이
+// 알갱이 위치가 다른 무늬 3가지를 섞어서 찍어 낸 듯한 느낌을 줄임
+// 3D 상자 모양: 테두리 1도트를 빗면으로 (위 T 가장 밝게, 왼쪽 L, 오른쪽 R, 아래 B 가장 어둡게, 모서리는 대각선으로 나눔)
+// 윗면은 왼쪽 위 → 오른쪽 아래로 3단계(1·2·3) 자연스러운 그늘, 작은 반짝이 w, 알갱이 d 하나
+function makeBoxPattern(speck) {
+  const N = 8, rows = [];
+  for (let y = 0; y < N; y++) {
+    let row = '';
+    for (let x = 0; x < N; x++) {
+      const top = y === 0, bot = y === N - 1, left = x === 0, right = x === N - 1;
+      if (top && right) row += x - y > N - 1 - x ? 'T' : 'R';
+      else if (bot && left) row += 'L';
+      else if (top) row += 'T';
+      else if (bot) row += 'B';
+      else if (left) row += 'L';
+      else if (right) row += 'R';
+      else if ((x === 1 || x === 2) && y === 1 || x === 1 && y === 2) row += 'w';
+      else if (x === speck[0] && y === speck[1]) row += 'd';
+      else { const t = (x + y - 2) / 10; row += t < 0.34 ? '1' : t < 0.67 ? '2' : '3'; }
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+const SQUARES = [makeBoxPattern([5, 4]), makeBoxPattern([3, 5]), makeBoxPattern([5, 2])];
+const squareCache = new Map();
+function paintSquare(c2, x, y, w, h, ch, variant = 0) {
+  const scale = c2.getTransform ? c2.getTransform().a : 1;
+  const dw = Math.max(1, Math.round(w * scale)), dh = Math.max(1, Math.round(h * scale));
+  const key = ch + '|' + dw + '|' + dh + '|' + variant;
+  let cv = squareCache.get(key);
+  if (!cv) {
+    const col = COLORS[ch], dark = ch === 'D';
+    const SQUARE = SQUARES[variant % SQUARES.length];
+    // 이전(은은)과 강한 버전의 중간 세기
+    const pal = dark ? {
+      T: '#46424f', L: '#36323f', R: '#17141d', B: '#0e0c12',
+      w: '#5a5668', d: '#1c1924', 1: '#2e2a37', 2: '#26222e', 3: '#211d29',
+    } : {
+      T: shade(col, 0.22), L: shade(col, 0.12), R: shade(col, -0.12), B: shade(col, -0.22),
+      w: shade(col, 0.42), d: shade(col, -0.08),
+      1: shade(col, 0.05), 2: col, 3: shade(col, -0.05),
+    };
+    cv = document.createElement('canvas');
+    cv.width = dw; cv.height = dh;
+    const g = cv.getContext('2d');
+    const N = 8;
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const x0 = Math.round(c * dw / N), y0 = Math.round(r * dh / N);
+      const x1 = Math.round((c + 1) * dw / N), y1 = Math.round((r + 1) * dh / N);
+      if (x1 <= x0 || y1 <= y0) continue;
+      g.fillStyle = pal[SQUARE[r][c]];
+      g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    }
+    squareCache.set(key, cv);
+  }
+  c2.drawImage(cv, x, y, w, h);
 }
 // 도트 상자 블록 (클리어 그림의 도트 그림용)
 function paintBlock(c2, x, y, w, h, ch) {
@@ -1628,10 +1717,11 @@ function buildPicCache() {
   const cv = document.createElement('canvas');
   cv.width = Math.round(g.C * g.cs * RES); cv.height = Math.round(g.R * g.cs * RES);
   g.pic = cv; g.pctx = cv.getContext('2d');
+  // 그림 속 음식은 네모 칸 (칸을 빈틈없이 채우고 은은한 입체 음영만)
   for (let r = 0; r < g.R; r++) for (let c = 0; c < g.C; c++) {
     if (!g.grid[r][c]) continue;
-    const [x, y, w] = cellDev(r, c);
-    paintBead(g.pctx, x, y, w, g.grid[r][c]);
+    const [x, y, w, h] = cellDev(r, c);
+    paintSquare(g.pctx, x, y, w, h, g.grid[r][c], (r * 7 + c * 13) % 3);
   }
 }
 function clearCell(r, c) { const [x, y, w, h] = cellDev(r, c); game.pctx.clearRect(x, y, w, h); }
@@ -1847,17 +1937,49 @@ function toast(text) {
 
 // 숨은 아이템
 const ITEMS = {
-  speed:   { icon: '⚡', name: '질주!',     desc: '쇠똥구리가 2배 빨라져요', color: '#ffd84a' },
-  swarm:   { icon: '★', name: '총출동!',   desc: '쇠똥구리가 3배 자주 나와요', color: '#5cc45a' },
-  unchain: { icon: '✂', name: '사슬 끊기!', desc: '모든 사슬이 풀렸어요', color: '#bfe6ff' },
-  slow:    { icon: '🐌', name: '방해!',     desc: '상대 쇠똥구리가 느려져요', color: '#ff8fbf' },
+  speed:   { icon: '⚡', name: '질주!',     desc: '쇠똥구리가 2배 빨라져요', color: '#ffd84a',
+             guide: ['일꾼 쇠똥구리가 모두 2배 빠르게 걸어요.', '음식을 더 빨리 날라 와요.'], time: '8초', where: '모든 모드' },
+  swarm:   { icon: '★', name: '총출동!',   desc: '쇠똥구리가 3배 자주 나와요', color: '#5cc45a',
+             guide: ['일터의 집에서 쇠똥구리가 3배 자주 나와요.', '일터 칸이 빨리 비어요.'], time: '8초', where: '모든 모드' },
+  unchain: { icon: '✂', name: '사슬 끊기!', desc: '모든 사슬이 풀렸어요', color: '#bfe6ff',
+             guide: ['대기열의 사슬이 전부 풀려요.', '묶여 있던 쇠똥구리도 하나씩 고를 수 있어요.'], time: '즉시', where: '모든 모드' },
+  slow:    { icon: '🐌', name: '방해!',     desc: '상대 쇠똥구리가 느려져요', color: '#ff8fbf',
+             guide: ['상대 폰의 일꾼 쇠똥구리가 절반 속도로 느려져요.', '(혼자·협동에서는 질주로 바뀌어요)'], time: '6초', where: '경쟁 온라인' },
+  bomb:    { icon: '💣', name: '폭탄!',     desc: '주변 3×3 음식이 한 번에 없어져요', color: '#ffb070',
+             guide: ['집은 자리 주변 3×3 칸의 음식이 펑! 사라져요.', '사라진 만큼 대기 쇠똥구리 숫자도 줄어요.'], time: '즉시', where: '모든 모드' },
 };
+const ITEM_ORDER = ['speed', 'swarm', 'unchain', 'bomb', 'slow'];
+let itemsBack = null;   // 아이템 도감을 닫으면 돌아갈 화면
+function openItems(from) { itemsBack = from; overlay = 'items'; }
+// 아이템 도감: 어떤 아이템이 있고 무슨 효과인지
+function drawItems() {
+  panel(40, 726);
+  text('아이템 도감', W / 2, 72, 24, '#3a2412');
+  const intro = ['음식 속에 아이템이 숨어 있어요 (스테이지마다 3~9개).', '쇠똥구리가 그 음식을 집는 순간 그 자리에서 발동!'];
+  intro.forEach((t, i) => text(t, W / 2, 100 + i * 20, fitSize(t, 340, 13, 10), '#5c4a38'));
+  let y = 140;
+  for (const key of ITEM_ORDER) {
+    const it = ITEMS[key];
+    pxBox(40, y, W - 80, 100, '#fffaf0', '#c8b08a', 3);
+    // 아이콘 배지
+    pxBox(52, y + 14, 52, 52, it.color, OUTLINE, 3);
+    text(it.icon, 78, y + 40, 26, '#3a2412');
+    text(it.name.replace('!', ''), 116, y + 22, 18, '#3a2412', 'left');
+    pxBox(W - 150, y + 10, 98, 22, '#f3e3c3', OUTLINE, 2);
+    text(`⏱ ${it.time}`, W - 101, y + 21, 12, '#3a2412');
+    it.guide.forEach((t, i) => text(t, 116, y + 48 + i * 19, fitSize(t, W - 166, 13, 10), '#3a2412', 'left'));
+    text(`나오는 곳: ${it.where}`, 116, y + 86, 11, '#8a6a48', 'left');
+    y += 106;
+  }
+  text('⏱ 시간은 1배속 기준이에요 (배속을 올리면 더 빨리 끝나요)', W / 2, y + 4, 11, '#8a6a48');
+  button(W / 2 - 70, y + 20, 140, 44, '닫기', () => { overlay = itemsBack; itemsBack = null; }, '#ffd34d', '#3a2412', 16);
+}
 function placeItems(g, idx) {
   const rng = mulberry32(idx * 31 + 7);
   const cells = [];
   g.grid.forEach((row, r) => row.forEach((v, c) => { if (v) cells.push(r * g.C + c); }));
   const n = Math.min(9, 3 + Math.floor(idx / 8));
-  const types = mode === 'versus' ? ['speed', 'swarm', 'unchain', 'slow', 'slow'] : ['speed', 'swarm', 'unchain'];
+  const types = mode === 'versus' ? ['speed', 'swarm', 'unchain', 'bomb', 'slow', 'slow'] : ['speed', 'swarm', 'unchain', 'bomb'];
   g.items = new Map();
   for (let i = 0; i < n && cells.length; i++) {
     const k = cells.splice(Math.floor(rng() * cells.length), 1)[0];
@@ -1865,18 +1987,67 @@ function placeItems(g, idx) {
   }
 }
 // 아이템은 쇠똥구리가 음식을 "집는 순간" 그 자리에서 발동 (어디서 나왔는지 보이게)
-function activateItem(type, x, y) {
-  const it = ITEMS[type];
+function activateItem(type, x, y, r, c) {
   if (type === 'speed') game.fx.speed = 8;
   else if (type === 'swarm') game.fx.swarm = 8;
   else if (type === 'unchain') game.queues.flat().forEach(a => a.group = null);
+  else if (type === 'bomb') bombAt(r, c);
   else if (type === 'slow') {
     if (mode === 'versus' && online()) netSend({ t: 'item', type: 'slow' });
     else { type = 'speed'; game.fx.speed = 8; }
   }
   itemPop(type, x, y);
-  melody([880, 1175, 1568], 70, 0.04);
-  vibrate(40);
+  if (type === 'bomb') boomSound(); else melody([880, 1175, 1568], 70, 0.04);
+  vibrate(type === 'bomb' ? 120 : 40);
+}
+// 폭탄: 주변 3×3 음식을 없애고, 없어진 만큼 그 색 쇠똥구리의 숫자를 줄여서 끝까지 맞게 함
+// (다른 쇠똥구리가 가지러 가는 중인 음식은 남겨 둠)
+function bombAt(r0, c0) {
+  const lost = {};
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const r = r0 + dr, c = c0 + dc;
+    if (r < 0 || c < 0 || r >= game.R || c >= game.C) continue;
+    const v = game.grid[r][c];
+    if (!v || game.reserved[r][c]) continue;
+    game.grid[r][c] = null; clearCell(r, c); game.remaining--;
+    lost[v] = (lost[v] || 0) + 1;
+    game.items.delete(r * game.C + c);
+    const [x, y] = cellCenter(r, c);
+    burst(x, y, COLORS[v], 6, 140);
+    burst(x, y, '#ffb070', 3, 90);
+  }
+  game.reach = reachMap(game.grid);
+  for (const [col, n0] of Object.entries(lost)) {
+    let n = n0;
+    // 대기열 뒤쪽 쇠똥구리부터 숫자를 줄임
+    const waiting = [];
+    game.queues.forEach((q, ci) => q.forEach((a, i) => { if (a.color === col) waiting.push({ a, ci, i }); }));
+    waiting.sort((p, q) => q.i - p.i);
+    for (const { a, ci } of waiting) {
+      if (!n) break;
+      const take = Math.min(n, a.total);
+      a.total -= take; n -= take;
+      if (a.total <= 0) {   // 숫자가 0이 되면 대기열에서 빠짐 (사슬로 묶였던 짝은 풀림)
+        if (a.group) a.group.members.forEach(m => m.group = null);
+        game.queues[ci].splice(game.queues[ci].indexOf(a), 1);
+      }
+    }
+    // 그래도 남으면 일터 쇠똥구리의 남은 몫을 줄임
+    game.slots.forEach((a, s) => {
+      if (!n || !a || a.color !== col) return;
+      const take = Math.min(n, a.total - a.dispatched);
+      a.total -= take; n -= take;
+      if (a.dispatched >= a.total) { game.slots[s] = null; burst(a.x, a.y, '#ffffff', 10, 70); }
+    });
+  }
+}
+function boomSound() {
+  if (!ac) return;
+  try {
+    const t = ac.currentTime;
+    crunch(t, 0.35, 260, 0.5); crunch(t + 0.02, 0.25, 900, 0.25);
+    beep(110, 0.3, 0.08, 'sine');
+  } catch (e) {}
 }
 // 집은 자리에서 터지는 효과 + 떠오르는 이름 + 짧은 안내
 function itemPop(type, x, y) {
@@ -2343,6 +2514,7 @@ function update(dt) {
   }
   if (screen !== 'play' || !games.length) return;
   game = games[0];
+  if (overlay === 'items' && !online()) return;   // 혼자 할 때 도감을 보는 동안은 잠깐 멈춤
   if (game.mirror) updateMirror(dt); else updateGame(dt);
   // 온라인: 협동 방장은 상태를, 경쟁은 내 진행도를 보냄
   if (online()) {
@@ -2440,7 +2612,7 @@ function updateGame(dt) {
           if (game.items.has(key)) {   // 숨은 아이템: 집는 순간 이 자리에서 발동
             const type = game.items.get(key); game.items.delete(key);
             cr.item = type;
-            activateItem(type, cr.x, cr.y);
+            activateItem(type, cr.x, cr.y, cr.r, cr.c);
           }
           cr.state = 'back'; cr.pts = backPath(cr); cr.i = 0;
           vibrate(12);   // 안드로이드: 짧은 진동
@@ -2627,6 +2799,13 @@ function goMenu() {
 }
 
 // ================== 화면: 플레이 ==================
+// 위아래로 움직이는 쇠똥구리의 얇은 그림자 (몸 아래쪽에 살짝 오른쪽으로 비켜서)
+function beetleShadow(x, y, sp) {
+  ctx.fillStyle = 'rgba(40,25,10,.24)';
+  ctx.beginPath();
+  ctx.ellipse(x + sp.lw * 0.12, y + sp.lh * 0.5 + 0.5, sp.lw * 0.34, Math.max(1, sp.lh * 0.06), 0, 0, PI * 2);
+  ctx.fill();
+}
 function shakeOf(a) { return a.shake > 0 ? Math.round(Math.sin(a.shake * 60) * 5 * (a.shake / 0.4)) : 0; }
 function drawPlay() {
   const g = game;
@@ -2657,6 +2836,9 @@ function drawPlay() {
   }
 
   ctx.drawImage(g.pic, g.gx, g.gy, g.C * g.cs, g.R * g.cs);
+
+  // 아이템 도감 버튼 (그림판 왼쪽 아래 구석)
+  button(PIC.x + 2, PIC.y + PIC.h - 30, 70, 26, '? 아이템', () => openItems(null), '#bfe6ff', '#3a2412', 11);
 
   // 아이템 효과 표시
   let fy = PIC.y + 4;
@@ -2749,6 +2931,7 @@ function drawPlay() {
     ctx.fillStyle = 'rgba(40,25,10,.25)';
     if (cr.state === 'go') {
       if (vertical) {
+        beetleShadow(cr.x, cr.y, getSprite('beetle' + fr, cr.color, sv < 0 ? 0 : 2, BP));
         drawSprite('beetle' + fr, cr.color, sv < 0 ? 0 : 2, BP, cr.x, cr.y);
       } else {
         const sp = getSprite('beetleWalk' + fr, cr.color, 0, BP, flip);
@@ -2758,11 +2941,15 @@ function drawPlay() {
     } else {
       const turn = (vertical ? sv : face) * cr.roll / r;
       if (vertical) {
+        // 위아래로 굴릴 때: 공을 먼저 그리고 쇠똥구리를 위에 겹쳐서, 몸이 공 가장자리를 살짝 가리게
         const sp = getSprite('beetle' + fr, cr.color, sv < 0 ? 2 : 0, BP);
-        drawSprite('beetle' + fr, cr.color, sv < 0 ? 2 : 0, BP, cr.x, cr.y - sv * (r + sp.lh / 2 - 1));
         ctx.fillStyle = 'rgba(40,25,10,.25)';
         ctx.beginPath(); ctx.ellipse(cr.x, cr.y + r * 0.85, r, 1.5, 0, 0, PI * 2); ctx.fill();
         drawFoodBall(cr.x, cr.y, r, cr.color, turn);
+        const overlap = r * 0.5;   // 공 지름의 약 1/4을 몸이 가림
+        const by = cr.y - sv * (r + sp.lh / 2 - overlap);
+        beetleShadow(cr.x, by, sp);
+        drawSprite('beetle' + fr, cr.color, sv < 0 ? 2 : 0, BP, cr.x, by);
       } else {
         const ground = cr.y + r;
         const sp = getSprite('beetlePush' + fr, cr.color, 0, BP, flip);
@@ -2942,13 +3129,13 @@ function drawOverlay() {
     panel(90, 610);
     text('게임 방법', W / 2, 126, 24, '#3a2412');
     const lines = [
-      ['b', '위 그림은 동글동글 음식이에요.'],
+      ['b', '위 그림은 네모난 음식 조각이에요.'],
       ['a', '아래 3줄의 맨 위 쇠똥구리를 눌러'],
       ['', '일터(5칸)로 보내요.'],
       ['c', '숫자만큼 일꾼이 집에서 나와 그림판'],
       ['', '가장자리를 돌다 빈 길로 꺾어 들어가'],
       ['', '같은 색 음식을 가져와요.'],
-      ['', '올 땐 거꾸로 굴려서 굴로 쏙!'],
+      ['', '집은 음식은 동그랗게 굴려서 굴로 쏙!'],
       ['l', '사슬로 묶인 둘은 함께 맨 위에 있어야 해요.'],
       ['i', '숨은 아이템: 집는 순간 그 자리에서 발동!'],
       ['m', '모드 버튼: 혼자 / 협동 온라인 / 경쟁 온라인'],
@@ -2963,7 +3150,7 @@ function drawOverlay() {
       const y = 162 + i * 29;
       if (ic === 'a') drawSprite('beetle0', 'R', 0, 1.4, 62, y);
       else if (ic === 'c') drawSprite('beetleWalk0', 'B', 0, 1.6, 62, y);
-      else if (ic === 'b') paintBead(ctx, 54, y - 8, 16, 'Y');
+      else if (ic === 'b') paintSquare(ctx, 54, y - 8, 16, 16, 'Y');
       else if (ic === 'l') { ctx.fillStyle = '#9aa2b0'; ctx.fillRect(52, y - 2, 20, 4); }
       else if (ic === 'i') text('⚡', 62, y, 16, '#d08a20');
       else if (ic === 'm') text('👥', 62, y, 14, '#3a2412');
@@ -2973,7 +3160,10 @@ function drawOverlay() {
       else if (ic === 'o') text('★', 62, y, 16, '#e0a020');
       text(t, 84, y, fitSize(t, 300, 14, 10), '#3a2412', 'left');
     });
-    button(W / 2 - 80, 640, 160, 46, '알겠어요!', () => { overlay = null; });
+    button(W / 2 - 170, 640, 160, 46, '⚡ 아이템 보기', () => openItems('help'), '#bfe6ff', '#3a2412', 15);
+    button(W / 2 + 10, 640, 160, 46, '알겠어요!', () => { overlay = null; });
+  } else if (overlay === 'items') {
+    drawItems();
   } else if (overlay === 'clear') {
     drawClear();
   } else if (overlay === 'vsEnd') {
@@ -3016,7 +3206,7 @@ function resize() {
   RES = s * dpr;
   mainCtx.setTransform(RES, 0, 0, RES, 0, 0);
   mainCtx.imageSmoothingEnabled = false;
-  spriteCache.clear(); thumbCache.clear(); hiresCache.clear(); layers = {};
+  spriteCache.clear(); thumbCache.clear(); hiresCache.clear(); beadCache.clear(); squareCache.clear(); layers = {};
   const cur = game;
   for (const gm of games) { game = gm; buildPicCache(); }
   game = cur;
