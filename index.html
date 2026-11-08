@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#2b1d14">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>개미 뷔페 퍼즐</title>
+<title>데굴데굴 쇠똥구리</title>
 <style>
   @font-face {
     font-family: 'DungGeunMo';
@@ -1306,12 +1306,13 @@ const SPR = {
 const spriteCache = new Map();
 function spriteColor(ch, color, name) {
   const b = COLORS[color];
-  if (name === 'beetle') {   // 쇠똥구리: 윤기 나는 검은 몸 + 맡은 음식 색 광택
+  if (name === 'beetle') {   // 쇠똥구리: 몸 전체가 맡은 음식 색 (검은 음식이면 윤기 나는 검정)
+    const dark = color === 'D';
     switch (ch) {
       case 'o': return '#000000';
-      case 'b': return '#211d28';
-      case 'h': return color === 'D' ? '#5a5668' : shade(b, 0.1);
-      case 's': return '#15121a';
+      case 'b': return dark ? '#211d28' : b;
+      case 'h': return dark ? '#5a5668' : shade(b, 0.45);
+      case 's': return dark ? '#15121a' : shade(b, -0.3);
       case 'e': return '#ffffff';
     }
   }
@@ -1959,7 +1960,7 @@ function drawPlayStatic() {
     for (let x = PIC.x - 2; x < PIC.x + PIC.w + 2; x += 12)
       if (((x - PIC.x) / 12 + (y - PIC.y) / 12) % 2 === 0)
         ctx.fillRect(x, y, Math.min(12, PIC.x + PIC.w + 2 - x), Math.min(12, PIC.y + PIC.h + 2 - y));
-  // 개미굴 (돌아오는 구멍 하나)
+  // 쇠똥구리 굴 (돌아오는 구멍 하나)
   ctx.fillStyle = '#5a3a22'; ctx.fillRect(HOLE.x - 34, HOLE.y - 2, 68, 14);
   ctx.fillStyle = '#9a6a40'; ctx.fillRect(HOLE.x - 28, HOLE.y - 8, 56, 12);
   ctx.fillStyle = '#b07c4c'; ctx.fillRect(HOLE.x - 18, HOLE.y - 12, 36, 6);
@@ -1988,10 +1989,10 @@ function drawHome(k, color) {
 // ================== 화면: 메뉴 ==================
 function drawMenu() {
   pxBox(30, 14, 360, 84, '#5a3a22');
-  text('개미 뷔페', W / 2, 44, 32, '#ffe08a', 'center', OUTLINE);
-  text(`음식을 모두 개미굴로 옮겨요! · ${Math.min(cleared, STAGES.length)}/${STAGES.length} 클리어`, W / 2, 80, 12, '#ffffff');
-  drawSprite('ant', 'R', 0, 2, 64, 54);
-  drawSprite('ant', 'B', 0, 2, 356, 54);
+  text('데굴데굴 쇠똥구리', W / 2, 44, 28, '#ffe08a', 'center', OUTLINE);
+  text(`음식을 굴려서 굴로 쏙! · ${Math.min(cleared, STAGES.length)}/${STAGES.length} 클리어`, W / 2, 80, 12, '#ffffff');
+  drawSprite('beetleWalk' + (Math.floor(time * 6) % 2), 'R', 0, 2, 58, 52);
+  drawSprite('beetleWalk' + (Math.floor(time * 6 + 1) % 2), 'B', 0, 2, 362, 52, 1, true);
   const ci = continueIdx();
   const cl = `▶ ${cleared > 0 ? '이어하기' : '시작하기'} · ${ci + 1}. ${STAGES[ci].name}`;
   button(30, 106, 360, 44, cl, () => startStage(ci), '#ffd34d', '#3a2412', fitSize(cl, 330, 16));
@@ -2224,7 +2225,7 @@ function drawOverlay() {
       ['c', '개미 숫자만큼 쇠똥구리가 그 칸의'],
       ['', '집에서 나와 그림 바깥 길을 돌아요.'],
       ['', '일직선으로 닿는 같은 색 음식을'],
-      ['', '굴려서 개미굴 구멍으로 가져와요.'],
+      ['', '거꾸로 굴려서 굴 구멍으로 가져와요.'],
       ['', '다 보낸 개미는 바로 자리를 비워요.'],
       ['l', '사슬로 묶인 두 개미는 둘 다'],
       ['', '맨 위에 있어야 같이 올라가요.'],
