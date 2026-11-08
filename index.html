@@ -2399,33 +2399,79 @@ function simplify(pts) {
   }
   return out;
 }
-// 굴로 돌아가는 길: 양쪽 거리가 비슷하면(차이가 둘레의 1/4 이내) 쇠똥구리마다 왼쪽·오른쪽을 번갈아 골라
-// 한쪽으로 몰리지 않게 하고, 굴 앞에서도 들어오는 쪽(왼쪽/오른쪽)에 따라 자리를 나눠 들어감
+// 굴로 돌아가는 길: 가까운 쪽으로 돌아감 (분산은 음식을 왼쪽·오른쪽 번갈아 고르는 것으로 함)
+// 굴 앞에서는 들어오는 쪽(왼쪽/오른쪽)에 따라 자리를 나눠 들어감
+// 두 방향의 실제 길이를 재서 짧은 쪽을 고름 (굴 바로 앞에서 음식을 들고 나와도 테두리를 한 바퀴 돌지 않게)
+// 나가는 곳도 들어온 곳에 묶이지 않음: 음식을 집은 순간의 그림에서 빈 길을 다시 찾아
+// "그림 밖으로 나가는 거리 + 테두리를 따라 굴까지 거리"가 가장 짧은 출구로 나감
+// (들어올 때는 막혀 있던 가까운 길이 그사이 다른 쇠똥구리가 음식을 먹어 열렸을 수도 있음)
+const pathLen = pts => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); return s; };
+function trackToHole(E) {
+  const T = game.T;
+  const route = dir => {
+    // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
+    const side = dir > 0 ? 1 : -1;
+    const pts = [E, ...along(T, E, { x: HOLE.x + side * 12, y: T.y1 }, dir), { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  };
+  const a = route(1), b = route(-1);
+  return a.len <= b.len ? a : b;
+}
 function backPath(cr) {
-  const T = game.T, P = 2 * (T.x1 - T.x0) + 2 * (T.y1 - T.y0);
-  const Hp = { x: HOLE.x, y: T.y1 };
-  const cw = ((trackParam(T, Hp.x, Hp.y) - trackParam(T, cr.E.x, cr.E.y)) % P + P) % P;   // 시계 방향 거리
-  const ccw = (P - cw) % P;
-  let dir;
-  if (Math.abs(cw - ccw) < P * 0.25) dir = cr.id % 2 ? 1 : -1;   // 비슷하면 번갈아
-  else dir = cw <= ccw ? 1 : -1;
-  // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
-  const side = dir > 0 ? 1 : -1;
-  const entry = { x: HOLE.x + side * 12, y: T.y1 };
-  return simplify([...cr.inner.slice().reverse(), cr.E, ...along(T, cr.E, entry, dir), { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }]);
+  const g = game, R = g.R, C = g.C, N = R * C, start = cr.r * C + cr.c;
+  // 집은 자리에서 빈칸으로 넓이 우선 탐색
+  const dist = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), q = [start];
+  dist[start] = 0;
+  for (let i = 0; i < q.length; i++) {
+    const k = q[i], r = Math.floor(k / C), c = k % C;
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g.grid[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) continue;
+      dist[n] = dist[k] + 1; par[n] = k; q.push(n);
+    }
+  }
+  // 가장자리 칸마다 바깥 길로 나가 굴까지 가는 길이를 재서 가장 짧은 출구 선택
+  let best = null;
+  for (const k of q) {
+    const r = Math.floor(k / C), c = k % C;
+    const sides = [];
+    if (r === 0) sides.push('T');
+    if (r === R - 1) sides.push('B');
+    if (c === 0) sides.push('L');
+    if (c === C - 1) sides.push('R');
+    for (const s of sides) {
+      const E = geoEntry(g, r, c, s), p = geoCenter(g, r, c);
+      const tr = trackToHole(E);
+      const len = dist[k] * g.cs + Math.hypot(E.x - p.x, E.y - p.y) + tr.len;
+      if (!best || len < best.len) best = { k, tr, len };
+    }
+  }
+  if (!best) return simplify([...cr.inner.slice().reverse(), ...trackToHole(cr.E).pts]);   // 만일을 위한 예전 길
+  const chain = [];
+  for (let n = best.k; n !== start && n >= 0; n = par[n]) chain.push(geoCenter(g, Math.floor(n / C), n % C));
+  chain.reverse();
+  return simplify([{ x: cr.x, y: cr.y }, ...chain, ...best.tr.pts]);
 }
 
-function findTarget(color, sx, sy) {
-  const info = game.reach;
-  let best = null, bd = 1e9;
+// 가져올 음식 고르기: side가 -1이면 그림 왼쪽 절반, 1이면 오른쪽 절반에서 가장 가까운 음식.
+// 그쪽에 닿을 수 있는 음식이 없으면 반대쪽에서 고름.
+// 일터마다 왼쪽·오른쪽을 번갈아 고르면 음식이 양쪽에서 고르게 사라지고 쇠똥구리도 자연스럽게 나뉨
+function findTarget(color, sx, sy, side = 0) {
+  const info = game.reach, half = game.C / 2;
+  let best = null, bd = 1e9, alt = null, ad = 1e9;
   for (const [k, cands] of info.acc) {
     const r = Math.floor(k / game.C), c = k % game.C;
     if (game.grid[r][c] !== color || game.reserved[r][c]) continue;
+    const mine = !side || (side < 0 ? c < half : c >= half);
     for (const cand of cands) {
       const d = pathCost(game, info, sx, sy, k, cand);
-      if (d < bd) { bd = d; best = { k, r, c, cand }; }
+      if (mine) { if (d < bd) { bd = d; best = { k, r, c, cand }; } }
+      else if (d < ad) { ad = d; alt = { k, r, c, cand }; }
     }
   }
+  best = best || alt;
   if (best) best.path = makePath(sx, sy, best.k, best.cand);
   return best;
 }
@@ -2592,7 +2638,7 @@ function updateGame(dt) {
   animateLocal(dt);
   // 일터 쇠똥구리가 자기 집에서 일꾼 쇠똥구리를 내보냄
   if (game.state === 'play') {
-    const gap = DISPATCH_GAP / (game.fx.swarm > 0 ? 3 : 1);
+    const gap = DISPATCH_GAP;
     game.slots.forEach((a, s) => {
       if (!a || Math.hypot(a.tx - a.x, a.ty - a.y) > 4) return;
       a.cool -= sdt;
@@ -2600,8 +2646,9 @@ function updateGame(dt) {
         const h = homePos(s);
         // 집 앞이 붐비면 잠깐 기다렸다가 출발 (길에 쇠똥구리가 너무 많이 몰리지 않게)
         if (game.carriers.some(o => o.state === 'go' && Math.hypot(o.x - h.x, o.y - h.y) < SAFE_EXIT())) { a.cool = 0; return; }
-        const t = findTarget(a.color, h.x, h.y);
-        if (!t) { a.cool = 0; return; }
+        a.side = a.side === -1 ? 1 : -1;   // 이번엔 왼쪽, 다음엔 오른쪽 음식
+        const t = findTarget(a.color, h.x, h.y, a.side);
+        if (!t) { a.side = -a.side; a.cool = 0; return; }
         game.reserved[t.r][t.c] = true;
         game.carriers.push({ id: ++game.crSeq, color: a.color, owner: a.owner, x: h.x, y: h.y, r: t.r, c: t.c, E: t.path.E, inner: t.path.inner,
           pts: t.path.go, i: 0, state: 'go', walk: Math.random(), ang: -PI / 2, roll: 0, lag: -a.cool });
