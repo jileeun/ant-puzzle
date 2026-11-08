@@ -21,6 +21,8 @@
 <body>
 <canvas id="c"></canvas>
 <input id="photo" type="file" accept="image/*" style="display:none">
+<!-- 온라인 협동·경쟁: 폰끼리 직접 연결 (PeerJS, 무료 공개 연결 도우미 서버 사용) -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 "use strict";
 // ================== 기본 설정 ==================
@@ -838,6 +840,75 @@ function addInnerLines(g) {
   for (const [r, c] of mark) out[r][c] = 'D';
   return out;
 }
+// 그림마다 배경으로 지울 색 (가장자리에서부터 이 색들로만 이어진 부분을 지움)
+// 한 칸의 문자열 = 함께 지울 색 묶음. 예: 'RW'는 빨강·흰 체크무늬 식탁보
+const STRIP = {
+  '하트 풍선': ['L', 'G'], '과일 바구니': ['L', 'RW'], '열대어': ['BC', 'S'], '줄무늬 고양이': ['PK'],
+  '사과나무 언덕': ['L', 'G', 'E', 'S'], '딸기 소풍': ['WK'], '목도리 펭귄': ['L', 'BC'], '바닷속 문어': ['BC', 'S'],
+  '잎 위의 무당벌레': ['Y'], '선물과 트리': ['M', 'S'], '보석 왕관': ['P'],
+  '별이 빛나는 밤': ['M', 'B', 'L'], '귀여운 소녀': ['L'], '큰 파도': ['S'], '꼬마 마녀': ['M'], '해바라기': ['L', 'O', 'N'],
+  '소방관': ['L', 'W'], '진주 귀걸이 소녀': ['M'], '수련 연못': ['BC'], '꽃 화관 소녀': ['Y'], '붉은 산': ['B', 'L', 'W', 'E'],
+  '왕자님': ['P'], '놀이공원': ['K', 'P', 'O', 'G'], '모나리자': ['L', 'G', 'E', 'S'], '눈 오는 밤': ['M', 'W'],
+  '우주 꼬마': ['M'], '절규': ['ORY', 'MB', 'E'], '바닷가': ['L', 'B', 'C', 'W', 'S'],
+  '버섯 마을': ['G', 'E'], '몬드리안': ['W'], '도시의 밤': ['M', 'B', 'C', 'L'],
+};
+// 배경 지우기
+//  layers가 있으면: 각 색 묶음마다 그림 가장자리에서 그 색들로만 이어진 칸을 지움
+//  없으면(사진): 가장자리에 닿은 넓은 한 색 덩어리를 차례로 지움 (그림의 1/4 이상은 남김)
+function stripBackground(src, layers) {
+  const g = src.map(r => r.slice());
+  const R = g.length, C = g[0].length, N = R * C;
+  const edge = (r, c) => r === 0 || c === 0 || r === R - 1 || c === C - 1;
+  if (layers) {
+    for (const cols of layers) {
+      const st = [];
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++)
+        if (edge(r, c) && g[r][c] && cols.includes(g[r][c])) { st.push([r, c]); g[r][c] = null; }
+      while (st.length) {
+        const [r, c] = st.pop();
+        for (const [dr, dc] of D4) {
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nc >= 0 && nr < R && nc < C && g[nr][nc] && cols.includes(g[nr][nc])) { g[nr][nc] = null; st.push([nr, nc]); }
+        }
+      }
+    }
+  } else {
+    let filled = 0; g.forEach(r => r.forEach(v => { if (v) filled++; }));
+    const keepMin = filled * 0.25, minSize = N * 0.03;
+    for (let pass = 0; pass < 8; pass++) {
+      const seen = g.map(r => r.map(() => false));
+      let best = null;
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+        if (!g[r][c] || seen[r][c]) continue;
+        const col = g[r][c], cells = [[r, c]]; seen[r][c] = true; let touch = false;
+        for (let i = 0; i < cells.length; i++) {
+          const [y, x] = cells[i];
+          if (edge(y, x)) touch = true;
+          for (const [dr, dc] of D4) {
+            const ny = y + dr, nx = x + dc;
+            if (ny >= 0 && nx >= 0 && ny < R && nx < C && !seen[ny][nx] && g[ny][nx] === col) { seen[ny][nx] = true; cells.push([ny, nx]); }
+          }
+        }
+        if (touch && cells.length >= minSize && (!best || cells.length > best.length)) best = cells;
+      }
+      if (!best || filled - best.length < keepMin) break;
+      for (const [r, c] of best) g[r][c] = null;
+      filled -= best.length;
+    }
+  }
+  // 1~4칸 부스러기 정리
+  const seen = g.map(r => r.map(() => false));
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!g[r][c] || seen[r][c]) continue;
+    const cells = [[r, c]]; seen[r][c] = true;
+    for (let i = 0; i < cells.length; i++) for (const [dr, dc] of D4) {
+      const ny = cells[i][0] + dr, nx = cells[i][1] + dc;
+      if (ny >= 0 && nx >= 0 && ny < R && nx < C && g[ny][nx] && !seen[ny][nx]) { seen[ny][nx] = true; cells.push([ny, nx]); }
+    }
+    if (cells.length <= 4) for (const [y, x] of cells) g[y][x] = null;
+  }
+  return g;
+}
 function processPixel(art) {
   const base = parseArt(art);
   const R0 = base.length, C0 = base[0].length;
@@ -926,7 +997,11 @@ function processPaint(def) {
       out[r].push(best);
     }
   }
-  return addOutline(addInnerLines(out));
+  // 배경을 지우고 사물만 남김. 고해상도 그림을 같은 모양으로 오려 낼 수 있게 마스크도 저장
+  const stripped = stripBackground(out, STRIP[def.name] || []);
+  const grid = addOutline(addInnerLines(stripped));
+  grid.mask = { cells: stripped.map(r => r.map(v => !!v)), C: Cn, R: Rn };
+  return grid;
 }
 
 // 스테이지 목록: 도트 그림 32개 + 도형 그림 20개
@@ -1053,7 +1128,7 @@ const REPLACE_ARTS = {
   29: { name:'선물과 트리', w:32, h:30, draw(p) {
     p.bg('M');
     for (const [x,y] of [[30,30],[80,70],[250,40],[290,100],[40,140],[280,180],[60,210]]) p.circ(x,y,5,'W');
-    p.rect(0,255,320,45,'N');
+    p.rect(0,255,320,45,'S');
     p.rect(148,215,24,45,'N');
     p.group('G', q => { q.poly([[160,30],[230,120],[90,120]]); q.poly([[160,80],[250,180],[70,180]]); q.poly([[160,130],[270,235],[50,235]]); });
     p.curve([[105,110],[160,130],[215,105]],'W',6); p.curve([[90,170],[160,192],[235,165]],'K',6); p.curve([[75,225],[160,245],[250,222]],'W',6);
@@ -1086,7 +1161,7 @@ STAGES.forEach((st, i) => {
   st.targetAnts = Math.min(30, 14 + Math.floor(i * 0.35));
 });
 // 자동 테스트에서 막힌 스테이지는 개미 순서를 다른 시드로 다시 만든다 (스테이지 번호-1 : 시드)
-const SEED_FIX = { 8: 1, 21: 1, 22: 1, 37: 1, 42: 1 };
+const SEED_FIX = { 3: 1, 8: 1, 21: 1, 22: 1, 29: 2, 37: 1, 42: 1, 44: 4, 50: 2 };
 function stageGrid(i) {
   const st = STAGES[i];
   if (!st.grid) st.grid = st.src.type === 'pixel' ? processPixel(st.src.art) : processPaint(st.src.def);
@@ -1142,7 +1217,11 @@ function photoToGrid(img) {
       out[r].push(a < 128 ? null : nearest(pr, pg, pb, palKeep));
     }
   }
-  return addOutline(out);   // 사진은 그라데이션이 많아서 안쪽 선 없이 바깥 테두리만
+  // 사진도 배경(하늘·벽 등 가장자리의 넓은 색)을 지우고 사물만 남김. 사진은 그라데이션이 많아서 안쪽 선 없이
+  const stripped = stripBackground(out);
+  const grid = addOutline(stripped);
+  grid.mask = { cells: stripped.map(r => r.map(v => !!v)), C: Cn, R: Rn };
+  return grid;
 }
 function makePhotoStage(img) {
   const idx = BASE_COUNT;
@@ -1312,20 +1391,23 @@ function buildStage(idx) {
 }
 
 // ================== 레이아웃 ==================
-const PIC = { x: 16, y: 74, w: 388, h: 292 };
-const HOLE = { x: 210, y: 388 };           // 돌아오는 굴은 가운데
-const SLOT = { y: 432, h: 88, w: 72, gap: 6, x0: 18 };
-const Q = { y: 534, rowH: 66, colW: 112, gap: 15 };
+// 화면 배치: 위 2/3는 그림, 아래 1/3은 일터 + 대기열(3줄)
+const PIC = { x: 16, y: 74, w: 388, h: 420 };
+const GROUND_Y = 532;   // 풀밭과 흙의 경계
+const HOLE = { x: 210, y: 512 };           // 돌아오는 굴은 가운데
+const SLOT = { y: 548, h: 62, w: 72, gap: 6, x0: 18 };
+const Q = { y: 620, rowH: 52, colW: 112, gap: 15 };
+const CARD_PX = 2.6;   // 일터·대기열 쇠똥구리 크기
 Q.x0 = (W - (3 * Q.colW + 2 * Q.gap)) / 2;
 const SPEED = 80;           // 1배속 쇠똥구리 속도 (음식을 굴리는 모습이 보이게 천천히)
 const SPEEDS = [1, 2, 3, 5, 9]; // 배속 버튼을 누를 때마다 바뀌는 순서
-const beetlePx = () => Math.max(0.7, game.cs * 1.4 / 15);   // 쇠똥구리 = 음식 한 칸보다 살짝 크게
+const beetlePx = () => Math.max(0.9, game.cs * 1.82 / 15);   // 움직이는 쇠똥구리 = 음식 한 칸의 약 1.8배 (이전보다 1.3배 크게)
 const ballR = () => game.cs * 0.5;                            // 굴리는 음식 = 그림 속 음식 한 칸
 const DISPATCH_GAP = 0.4;   // 쇠똥구리 출발 간격(초)
 const TRACK_M = -3;         // 쇠똥구리 길: 그림판 가장자리에서 안쪽으로 3px
 const HOLE_DETOUR = 46;     // 가운데 집의 쇠똥구리는 굴을 비켜서 올라감
 const colX = c => Q.x0 + c * (Q.colW + Q.gap) + Q.colW / 2;
-const qPosY = i => Q.y + 14 + i * Q.rowH + Q.rowH / 2;
+const qPosY = i => Q.y + 10 + i * Q.rowH + Q.rowH / 2;
 const slotCenter = k => ({ x: SLOT.x0 + k * (SLOT.w + SLOT.gap) + SLOT.w / 2, y: SLOT.y + SLOT.h / 2 });
 const homePos = k => ({ x: slotCenter(k).x, y: SLOT.y - 12 });
 const PCOL = ['#4a82e8', '#ef4f5a'];   // 1P 파랑, 2P 빨강
@@ -1597,12 +1679,11 @@ function hiresFor(i, w, h) {
     g.scale(cv.width / (src.def.w * 10), cv.height / (src.def.h * 10));
     src.def.draw(makePainter(g, new Set(), 3));
   } else if (src.type === 'photo') {
-    // 내 사진: 원본 사진을 그대로 보여줌
+    // 내 사진: 원본 사진 (배경은 아래에서 오려 냄)
     g.imageSmoothingQuality = 'high';
     g.drawImage(src.img, 0, 0, cv.width, cv.height);
   } else {
-    // 도트 그림: 실제로 먹은 음식 그림과 똑같이 (사물 테두리 포함)
-    g.fillStyle = '#fff8ea'; g.fillRect(0, 0, cv.width, cv.height);
+    // 도트 그림: 실제로 먹은 음식 그림과 똑같이 (사물 테두리 포함, 배경 없음)
     const art = stageGrid(i);
     const R = art.length, C = art[0].length, k = Math.min(cv.width / C, cv.height / R);
     const ox = (cv.width - C * k) / 2, oy = (cv.height - R * k) / 2;
@@ -1613,8 +1694,44 @@ function hiresFor(i, w, h) {
       g.fillRect(x0, y0, Math.round(ox + (c + 1) * k) - x0, Math.round(oy + (r + 1) * k) - y0);
     }
   }
+  const mask = (src.type === 'paint' || src.type === 'photo') && stageGrid(i).mask;
+  if (mask) cv = cutOut(cv, mask);
   hiresCache.set(key, cv);
   return cv;
+}
+// 음식 그림에 남은 사물 모양대로 고해상도 그림을 오려 내고 검은 외곽선을 둘러 줌
+function cutOut(img, mask) {
+  const m = document.createElement('canvas');
+  m.width = mask.C; m.height = mask.R;
+  const mg = m.getContext('2d');
+  mg.fillStyle = '#000';
+  mask.cells.forEach((row, r) => row.forEach((v, c) => { if (v) mg.fillRect(c, r, 1, 1); }));
+  const W2 = img.width, H2 = img.height;
+  // 부드러운 모양의 마스크 (작게 그린 걸 크게 늘리면 가장자리가 둥글어짐)
+  const soft = document.createElement('canvas');
+  soft.width = W2; soft.height = H2;
+  const sg = soft.getContext('2d');
+  sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high';
+  sg.drawImage(m, 0, 0, W2, H2);
+  const cell = W2 / mask.C;
+  // 사진/그림을 마스크 모양으로 오림
+  const cut = document.createElement('canvas');
+  cut.width = W2; cut.height = H2;
+  const cg = cut.getContext('2d');
+  cg.drawImage(img, 0, 0);
+  cg.globalCompositeOperation = 'destination-in';
+  cg.drawImage(soft, 0, 0);
+  // 외곽선: 마스크를 조금씩 밀어서 겹쳐 그린 검은 실루엣 위에 오린 그림
+  const out = document.createElement('canvas');
+  out.width = W2; out.height = H2;
+  const og = out.getContext('2d');
+  const o = Math.max(2, cell * 0.28);
+  for (let a = 0; a < 8; a++) og.drawImage(soft, Math.cos(a * PI / 4) * o, Math.sin(a * PI / 4) * o);
+  og.globalCompositeOperation = 'source-in';
+  og.fillStyle = COLORS.D; og.fillRect(0, 0, W2, H2);
+  og.globalCompositeOperation = 'source-over';
+  og.drawImage(cut, 0, 0);
+  return out;
 }
 
 // ================== 진행 저장 ==================
@@ -1632,7 +1749,7 @@ const store = (() => {
   };
 })();
 const MODES = ['solo', 'coop', 'versus'];
-const MODE_LABEL = { solo: '혼자 하기', coop: '협동 2인', versus: '경쟁 2인' };
+const MODE_LABEL = { solo: '혼자 하기', coop: '협동 온라인', versus: '경쟁 온라인' };
 let cleared = 0, lastStage = 0, speed = 1, mode = 'solo';
 try {
   cleared = parseInt(store.get('antPuzzleCleared') || '0', 10) || 0;
@@ -1658,11 +1775,11 @@ function continueIdx() {
 function cycleSpeed() { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; saveProgress(); toast(`${speed}배속`); }
 function cycleMode() {
   mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length]; saveProgress();
-  toast(mode === 'solo' ? '혼자 하기' : mode === 'coop' ? '협동: 둘이 번갈아 쇠똥구리를 골라요' : '경쟁: 폰을 가운데 두고 마주 보고 대결!');
+  toast(mode === 'solo' ? '혼자 하기' : mode === 'coop' ? '협동: 각자 폰으로 한 그림을 같이 먹어요' : '경쟁: 각자 폰으로 같은 그림 먹기 대결!');
 }
 
 // ================== 사운드 · 진동 ==================
-let ac = null, lastBeep = 0, lastVib = 0, userTapped = false;
+let ac = null, lastBeep = 0, lastVib = 0, lastPick = 0, userTapped = false;
 function beep(f, d, v = 0.05, type = 'square') {
   if (!ac) return;
   try {
@@ -1672,6 +1789,33 @@ function beep(f, d, v = 0.05, type = 'square') {
     g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d);
     o.connect(g).connect(ac.destination);
     o.start(); o.stop(ac.currentTime + d);
+  } catch (e) {}
+}
+// 음식을 집을 때 '콰작' 소리: 짧은 잡음을 두 번 (콰- 작) 터뜨려서 바삭하게 깨무는 느낌
+// (여러 마리가 동시에 집어도 시끄럽지 않게 간격을 둠)
+let noiseBuf = null;
+function crunch(at, len, freq, vol) {
+  if (!noiseBuf) {
+    noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.2), ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (Math.random() < 0.3 ? 1 : 0.35);   // 거친 알갱이 잡음
+  }
+  const src = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = noiseBuf;
+  bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.2;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(vol, at + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+  src.connect(bp).connect(g).connect(ac.destination);
+  src.start(at, Math.random() * 0.1, len + 0.02);
+}
+function pickSound() {
+  if (!ac || time - lastPick < 0.07) return;
+  lastPick = time;
+  try {
+    const t = ac.currentTime, f = 1400 + Math.random() * 600;
+    crunch(t, 0.05, f, 0.18);              // 콰-
+    crunch(t + 0.035, 0.07, f * 1.5, 0.13); // -작
   } catch (e) {}
 }
 function melody(notes, gap, v) { notes.forEach((f, i) => setTimeout(() => beep(f, 0.16, v, 'square'), i * gap)); }
@@ -1688,13 +1832,15 @@ let menuPage = 0;
 let overlay = null;
 let toastMsg = null;
 let btns = [];
-let curInst = null;       // 경쟁 모드에서 지금 그리는 플레이어 화면 (버튼 좌표 구분용)
+let curInst = null;
 let time = 0;
 let clearT = 0, confetti = [];
-let games = [];           // 혼자·협동: 1개, 경쟁: 2개 (0 = 아래 1P, 1 = 위 2P)
-let vsWinner = -1;
+let games = [];           // 지금 하는 게임 (항상 1개)
+let vsWin = false, vsNote = '';
+let remoteToast = false;  // 협동 방장: 친구가 누른 결과 안내는 친구 폰에 띄움
 
 function toast(text) {
+  if (remoteToast) { netSend({ t: 'toast', text }); return; }
   if (screen === 'play' && game) game.toast = { text, t: 1.6 };
   else toastMsg = { text, t: 1.6 };
 }
@@ -1718,18 +1864,29 @@ function placeItems(g, idx) {
     g.items.set(k, types[Math.floor(rng() * types.length)]);
   }
 }
-function activateItem(type) {
+// 아이템은 쇠똥구리가 음식을 "집는 순간" 그 자리에서 발동 (어디서 나왔는지 보이게)
+function activateItem(type, x, y) {
   const it = ITEMS[type];
   if (type === 'speed') game.fx.speed = 8;
   else if (type === 'swarm') game.fx.swarm = 8;
   else if (type === 'unchain') game.queues.flat().forEach(a => a.group = null);
   else if (type === 'slow') {
-    const other = games.find(x => x !== game);
-    if (other) other.fx.slow = 6; else game.fx.speed = 8;
+    if (mode === 'versus' && online()) netSend({ t: 'item', type: 'slow' });
+    else { type = 'speed'; game.fx.speed = 8; }
   }
-  game.banner = { text: `${it.icon} ${it.name}`, sub: it.desc, color: it.color, t: 1.6 };
+  itemPop(type, x, y);
   melody([880, 1175, 1568], 70, 0.04);
   vibrate(40);
+}
+// 집은 자리에서 터지는 효과 + 떠오르는 이름 + 짧은 안내
+function itemPop(type, x, y) {
+  const it = ITEMS[type];
+  game.pops.push({ x, y, t: 0, text: `${it.icon} ${it.name}`, color: it.color });
+  for (let i = 0; i < 18; i++) {
+    const a = i / 18 * PI * 2;
+    game.particles.push({ x, y, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: 0.6, color: i % 2 ? it.color : '#ffffff', s: 3 });
+  }
+  game.banner = { text: `${it.icon} ${it.name}`, sub: type === 'slow' ? '상대 쇠똥구리가 느려져요' : it.desc, color: it.color, t: 1.4 };
 }
 
 function makeGame(idx, player) {
@@ -1744,26 +1901,242 @@ function makeGame(idx, player) {
     queues: d.cols, slots: [null, null, null, null, null],
     carriers: [], particles: [], remaining: count, total: count,
     endT: 0, stuckT: 0, state: 'play',
-    fx: { speed: 0, swarm: 0, slow: 0 }, banner: null, toast: null,
-    turn: 0, score: [0, 0]
+    fx: { speed: 0, swarm: 0, slow: 0 }, banner: null, toast: null, pops: [],
+    turn: 0, score: [0, 0], antById: {}, crSeq: 0, crById: {}
   };
   g.reach = reachMap(g.grid);
   g.queues.forEach((q, c) => q.forEach((a, i) => {
-    Object.assign(a, { col: c, dispatched: 0, cool: 0, shake: 0, inSlot: false, slot: -1, owner: 0 });
+    Object.assign(a, { id: c * 1000 + i, col: c, dispatched: 0, cool: 0, shake: 0, inSlot: false, slot: -1, owner: 0 });
     a.x = colX(c); a.y = qPosY(i) + 260 + i * 30;
+    g.antById[a.id] = a;
   }));
   placeItems(g, idx);
   return g;
 }
+// 혼자 하기에서 고른 스테이지 시작. 온라인 모드인데 아직 연결 전이면 방(로비)부터
+function chooseStage(idx) {
+  if (mode !== 'solo' && !online()) { openLobby(idx); return; }
+  if (mode !== 'solo' && net.role !== 'host') { toast('스테이지는 방장이 골라요'); return; }
+  if (mode !== 'solo') netStartGame(idx); else startStage(idx);
+}
 function startStage(idx) {
-  games = mode === 'versus' ? [makeGame(idx, 0), makeGame(idx, 1)] : [makeGame(idx, 0)];
-  for (const gm of games) { game = gm; buildPicCache(); }
-  game = games[0];
-  vsWinner = -1;
+  games = [makeGame(idx, myPlayer())];
+  game = games[0]; buildPicCache();
+  game.mirror = mode === 'coop' && online() && net.role === 'guest';   // 협동 손님: 방장 화면을 그대로 따라감
+  vsWin = false; vsNote = '';
   screen = 'play';
   overlay = null;
   if (idx < BASE_COUNT) { lastStage = idx; saveProgress(); }
   if (idx === 0 && cleared === 0 && mode === 'solo') overlay = 'help';
+}
+function myPlayer() { return online() && net.role === 'guest' ? 1 : 0; }
+
+// ================== 온라인: 각자 폰으로 협동 / 경쟁 (PeerJS로 폰끼리 직접 연결) ==================
+// 빠른 매칭: 먼저 들어온 사람이 방장이 되어 기다리고, 다음에 들어온 사람과 바로 짝지어짐 (들어온 순서대로)
+// 방 만들기: 4자리 번호로 친구와 같은 방에 들어감
+const NET_PREFIX = 'degulgu-beetle-v1-';
+let net = null;     // { peer, conn, role: 'host'|'guest', connected, quick, code, snapT, progT }
+let lobby = null;   // { stage, status }
+function online() { return !!(net && net.conn && net.connected); }
+function netSend(o) { if (net && net.conn && net.conn.open) { try { net.conn.send(o); } catch (e) {} } }
+function netClose(msg) {
+  if (net) {
+    const n = net; net = null;
+    try { n.conn && n.conn.close(); } catch (e) {}
+    try { n.peer && n.peer.destroy(); } catch (e) {}
+  }
+  if (msg) toast(msg);
+}
+function openLobby(idx) { lobby = { stage: idx, status: '아래에서 방식을 골라 주세요' }; overlay = 'lobby'; }
+function peerOk() {
+  if (window.Peer) return true;
+  lobby.status = '온라인 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.';
+  return false;
+}
+function setupConn(conn) {
+  conn.on('data', onNetData);
+  conn.on('close', onNetClose);
+  conn.on('error', () => {});
+}
+function hostAccept(conn) {
+  if (net.conn) {   // 이미 짝이 있으면 다음 사람은 돌려보냄 → 그 사람은 다시 줄을 섬
+    conn.on('open', () => { try { conn.send({ t: 'full' }); } catch (e) {} setTimeout(() => conn.close(), 300); });
+    return;
+  }
+  net.conn = conn;
+  setupConn(conn);
+  conn.on('open', () => {
+    net.connected = true;
+    if (net.quick) { try { net.peer.disconnect(); } catch (e) {} }   // 빠른 매칭 자리를 다음 사람에게 비워 줌
+    lobby && (lobby.status = '친구가 들어왔어요!');
+    netStartGame(lobby ? lobby.stage : 0);
+  });
+}
+function quickMatch() {
+  if (!peerOk()) return;
+  netClose();
+  lobby.status = '상대를 찾는 중…';
+  const id = NET_PREFIX + 'q-' + mode;
+  const peer = new window.Peer(id);
+  net = { peer, role: null, quick: true };
+  const me = net;
+  peer.on('open', () => { if (net !== me) return; net.role = 'host'; lobby.status = '기다리는 중… 다음에 들어오는 사람과 바로 짝지어져요'; });
+  peer.on('connection', conn => { if (net === me) hostAccept(conn); });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'unavailable-id') { try { peer.destroy(); } catch (e) {} net = null; joinPeer(id, false); }   // 이미 누가 기다리는 중 → 그 사람에게 들어감
+    else netFail(err);
+  });
+}
+function createRoom() {
+  if (!peerOk()) return;
+  netClose();
+  const code = String(1000 + Math.floor(Math.random() * 9000));
+  const peer = new window.Peer(NET_PREFIX + 'r-' + code);
+  net = { peer, role: 'host', code };
+  const me = net;
+  lobby.status = '방을 만드는 중…';
+  peer.on('open', () => { if (net === me) lobby.status = `방 번호 ${code} — 친구에게 알려 주세요`; });
+  peer.on('connection', conn => { if (net === me) hostAccept(conn); });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'unavailable-id') { netClose(); createRoom(); } else netFail(err);
+  });
+}
+function joinRoom() {
+  if (!peerOk()) return;
+  const code = (window.prompt('방 번호 4자리를 입력해 주세요') || '').trim();
+  if (!/^\d{4}$/.test(code)) { lobby.status = '방 번호는 숫자 4자리예요'; return; }
+  netClose();
+  joinPeer(NET_PREFIX + 'r-' + code, true);
+}
+function joinPeer(targetId, byCode) {
+  const peer = new window.Peer();
+  net = { peer, role: 'guest', quick: !byCode };
+  const me = net;
+  lobby.status = byCode ? '방에 들어가는 중…' : '기다리는 사람에게 연결하는 중…';
+  const retry = () => { netClose(); if (lobby) { if (byCode) lobby.status = '그 번호의 방을 찾을 수 없어요'; else setTimeout(() => { if (lobby && !net) quickMatch(); }, 300 + Math.random() * 700); } };
+  peer.on('open', () => {
+    if (net !== me) return;
+    const conn = peer.connect(targetId, { reliable: true });
+    net.conn = conn;
+    setupConn(conn);
+    conn.on('open', () => { if (net !== me) return; net.connected = true; if (lobby) lobby.status = '연결됐어요! 방장이 시작하는 중…'; });
+    setTimeout(() => { if (net === me && !net.connected) retry(); }, 7000);
+  });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'peer-unavailable') retry(); else netFail(err);
+  });
+}
+function netFail(err) {
+  netClose();
+  if (lobby) lobby.status = '연결에 실패했어요. 다시 시도해 주세요. (' + (err && err.type || '오류') + ')';
+}
+function netStartGame(idx) {
+  netSend({ t: 'start', stage: idx, mode, speed });
+  lobby = null;
+  startStage(idx);
+}
+function onNetClose() {
+  if (!net) return;
+  net = null;
+  if (screen === 'play' && game && game.state === 'play') {
+    if (mode === 'versus') { vsNote = '상대가 나갔어요'; endVersus(true); }
+    else { goMenu(); toast('친구가 나갔어요'); }
+  } else if (overlay === 'lobby') { lobby.status = '연결이 끊겼어요. 다시 시도해 주세요.'; }
+  else toast('친구와 연결이 끊겼어요');
+}
+function leaveOnline() { netSend({ t: 'bye' }); netClose(); goMenu(); }
+function onNetData(m) {
+  if (!m || !m.t) return;
+  const g = game;
+  switch (m.t) {
+    case 'full':   // 먼저 온 사람끼리 짝이 됐음 → 다시 줄 서기
+      netClose(); if (lobby) { lobby.status = '다시 찾는 중…'; setTimeout(() => { if (lobby && !net) quickMatch(); }, 500 + Math.random() * 800); }
+      break;
+    case 'start':
+      mode = m.mode; speed = m.speed; lobby = null;
+      startStage(m.stage);
+      break;
+    case 'bye': onNetClose(); break;
+    case 'toast': toast(m.text); break;
+    case 'speed': if (net && net.role === 'host') cycleSpeed(); break;
+    case 'pick':   // 협동: 친구가 쇠똥구리를 고름 (방장만 처리)
+      if (g && net.role === 'host' && g.state === 'play') {
+        if (g.turn !== 1) { netSend({ t: 'toast', text: '지금은 방장 차례예요' }); break; }
+        remoteToast = true; tryPick(m.c, 0); remoteToast = false;
+      }
+      break;
+    case 'snap': if (g && g.mirror) applySnap(m); break;
+    case 'end':    // 협동: 방장이 끝을 알림
+      if (g && g.mirror) {
+        g.state = m.kind; g.score = m.score || g.score;
+        if (m.kind === 'clear') { overlay = 'clear'; clearT = 0; makeConfetti(); if (g.idx < BASE_COUNT && g.idx + 1 > cleared) { cleared = g.idx + 1; saveProgress(); } melody([523, 659, 784, 1046, 1318], 110, 0.05); }
+        else { overlay = 'fail'; melody([392, 330, 262], 150, 0.05); }
+      }
+      break;
+    case 'prog': if (g) g.opp = { rem: m.rem, total: m.total }; break;
+    case 'item':   // 경쟁: 상대가 방해 아이템을 썼음
+      if (g && g.state === 'play') {
+        g.fx.slow = 6;
+        g.banner = { text: '🐌 방해당했어요!', sub: '6초 동안 내 쇠똥구리가 느려져요', color: '#ffd0dc', t: 1.6 };
+        vibrate(60);
+      }
+      break;
+    case 'vs':     // 경쟁: 상대가 끝남 (clear = 상대 승리, stuck = 상대가 막힘)
+      if (g && g.state === 'play') endVersus(m.kind === 'stuck', m.kind === 'stuck' ? '상대가 막혔어요' : '상대가 먼저 다 먹었어요');
+      break;
+  }
+}
+// 협동 방장 → 손님: 지금 게임 상태 (1초에 10번)
+function makeSnap() {
+  const g = game;
+  return {
+    t: 'snap',
+    grid: g.grid.map(r => r.map(v => v || '.').join('')).join(''),
+    rem: g.remaining, turn: g.turn, score: g.score, fx: g.fx, speed, st: g.state,
+    banner: g.banner ? { text: g.banner.text, sub: g.banner.sub, color: g.banner.color, t: g.banner.t } : null,
+    pops: g.pops.map(p => [Math.round(p.x), Math.round(p.y), p.text, p.color, p.t]),
+    q: g.queues.map(q => q.map(a => a.id)),
+    grp: [...new Set(g.queues.flat().filter(a => a.group).map(a => a.group))].map(gr => gr.members.map(m => m.id)),
+    s: g.slots.map(a => a ? [a.id, a.dispatched, a.owner] : 0),
+    cr: g.carriers.map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100) / 100, c.state === 'go' ? 0 : 1, Math.round(c.roll), c.item ? 1 : 0, c.color]),
+  };
+}
+function applySnap(s) {
+  const g = game;
+  for (let i = 0; i < s.grid.length; i++) {
+    const r = Math.floor(i / g.C), c = i % g.C;
+    if (g.grid[r][c] && s.grid[i] === '.') { g.grid[r][c] = null; clearCell(r, c); }
+  }
+  g.remaining = s.rem; g.turn = s.turn; g.score = s.score; g.fx = s.fx; speed = s.speed;
+  if (s.banner && (!g.banner || g.banner.text !== s.banner.text)) g.banner = s.banner;
+  for (const [x, y, text, color, t] of s.pops) if (t < 0.15 && !g.pops.some(p => p.text === text && Math.abs(p.x - x) < 2)) {
+    g.pops.push({ x, y, t: 0, text, color });
+    for (let i = 0; i < 18; i++) { const a = i / 18 * PI * 2; g.particles.push({ x, y, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: 0.6, color: i % 2 ? color : '#ffffff', s: 3 }); }
+  }
+  const prevSlots = g.slots;
+  g.queues = s.q.map((ids, c) => ids.map(id => { const a = g.antById[id]; a.col = c; a.inSlot = false; return a; }));
+  Object.values(g.antById).forEach(a => a.group = null);
+  for (const ids of s.grp) { const grp = { members: ids.map(id => g.antById[id]) }; grp.members.forEach(m => m.group = grp); }
+  g.slots = s.s.map((e, k) => {
+    if (!e) { if (prevSlots[k]) burst(prevSlots[k].x, prevSlots[k].y, '#ffffff', 10, 70); return null; }
+    const a = g.antById[e[0]]; a.dispatched = e[1]; a.owner = e[2]; a.inSlot = true; a.slot = k; return a;
+  });
+  const seen = new Set();
+  for (const [id, x, y, ang, st, roll, item, color] of s.cr) {
+    seen.add(id);
+    let cr = g.crById[id];
+    if (!cr) cr = g.crById[id] = { id, x, y, color, walk: Math.random(), roll, ang };
+    cr.tx = x; cr.ty = y; cr.ang = ang; cr.state = st ? 'back' : 'go'; cr.troll = roll; cr.item = !!item;
+  }
+  for (const id in g.crById) if (!seen.has(+id)) {
+    const cr = g.crById[id];
+    if (cr.state === 'back') burst(HOLE.x, HOLE.y - 4, COLORS[cr.color], 3);
+    delete g.crById[id];
+  }
+  g.carriers = Object.values(g.crById);
 }
 
 const cellCenter = (r, c) => [game.gx + c * game.cs + game.cs / 2, game.gy + r * game.cs + game.cs / 2];
@@ -1932,8 +2305,9 @@ function burst(x, y, color, n, sp = 90) {
   }
 }
 function startClear() {
-  if (mode === 'versus') { endVersus(game.player, true); return; }
+  if (mode === 'versus') { netSend({ t: 'vs', kind: 'clear' }); endVersus(true, '먼저 다 먹었어요'); return; }
   game.state = 'clear'; overlay = 'clear'; clearT = 0;
+  if (online()) netSend({ t: 'end', kind: 'clear', score: game.score });
   makeConfetti();
   if (game.idx < BASE_COUNT && game.idx + 1 > cleared) { cleared = game.idx + 1; saveProgress(); }
   melody([523, 659, 784, 1046, 1318], 110, 0.05);
@@ -1947,13 +2321,15 @@ function makeConfetti() {
     sw: Math.random() * PI * 2, c: cols[i % cols.length], s: 4 + (i % 3) * 2
   });
 }
-function endVersus(winner, byClear) {
-  vsWinner = winner;
-  games.forEach(g => g.state = 'over');
+// 경쟁 결과 (won: 내가 이겼는지)
+function endVersus(won, note) {
+  if (!game || game.state === 'over') return;
+  vsWin = won; if (note) vsNote = note;
+  game.state = 'over';
   overlay = 'vsEnd'; clearT = 0;
-  makeConfetti();
-  if (byClear && game.idx < BASE_COUNT && game.idx + 1 > cleared) { cleared = game.idx + 1; saveProgress(); }
-  melody([523, 659, 784, 1046], 110, 0.05);
+  if (won) makeConfetti(); else confetti = [];
+  if (won && game.remaining === 0 && game.idx < BASE_COUNT && game.idx + 1 > cleared) { cleared = game.idx + 1; saveProgress(); }
+  melody(won ? [523, 659, 784, 1046] : [392, 330, 262], 110, 0.05);
   vibrate(80);
 }
 
@@ -1966,15 +2342,21 @@ function update(dt) {
     for (const p of confetti) { p.y += p.vy * dt; p.sw += dt * 4; if (p.y > H + 10) { p.y = -10; p.x = Math.random() * W; } }
   }
   if (screen !== 'play' || !games.length) return;
-  for (const gm of games) { game = gm; updateGame(dt); }
   game = games[0];
+  if (game.mirror) updateMirror(dt); else updateGame(dt);
+  // 온라인: 협동 방장은 상태를, 경쟁은 내 진행도를 보냄
+  if (online()) {
+    net.sendT = (net.sendT || 0) + dt;
+    if (mode === 'coop' && net.role === 'host' && net.sendT >= 0.1) { net.sendT = 0; netSend(makeSnap()); }
+    if (mode === 'versus' && net.sendT >= 0.4) { net.sendT = 0; netSend({ t: 'prog', rem: game.remaining, total: game.total }); }
+  }
 }
-function updateGame(dt) {
-  const sdt = dt * speed;   // 배속 적용
+// 화면 위치를 부드럽게 따라가는 부분 (방장·손님 공통)
+function animateLocal(dt) {
   if (game.toast) { game.toast.t -= dt; if (game.toast.t <= 0) game.toast = null; }
   if (game.banner) { game.banner.t -= dt; if (game.banner.t <= 0) game.banner = null; }
-  for (const f in game.fx) game.fx[f] = Math.max(0, game.fx[f] - sdt);
-
+  for (const p of game.pops) p.t += dt;
+  game.pops = game.pops.filter(p => p.t < 1.4);
   const k = Math.min(1, dt * 11);
   game.queues.forEach((q, c) => q.forEach((a, i) => { a.tx = colX(c); a.ty = qPosY(i); }));
   game.slots.forEach((a, s) => { if (a) { const p = slotCenter(s); a.tx = p.x; a.ty = p.y; } });
@@ -1982,7 +2364,25 @@ function updateGame(dt) {
     a.x += (a.tx - a.x) * k; a.y += (a.ty - a.y) * k;
     if (a.shake > 0) a.shake = Math.max(0, a.shake - dt);
   }
-
+  for (const p of game.particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
+  game.particles = game.particles.filter(p => p.life > 0);
+}
+// 협동 손님: 방장이 보낸 위치로 쇠똥구리를 부드럽게 옮기기만 함
+function updateMirror(dt) {
+  animateLocal(dt);
+  const k = Math.min(1, dt * 10);
+  for (const cr of game.carriers) {
+    if (cr.tx === undefined) continue;
+    const moving = Math.hypot(cr.tx - cr.x, cr.ty - cr.y) > 0.5;
+    cr.x += (cr.tx - cr.x) * k; cr.y += (cr.ty - cr.y) * k;
+    cr.roll += ((cr.troll || 0) - cr.roll) * k;
+    if (moving) cr.walk += dt * speed;
+  }
+}
+function updateGame(dt) {
+  const sdt = dt * speed;   // 배속 적용
+  for (const f in game.fx) game.fx[f] = Math.max(0, game.fx[f] - sdt);
+  animateLocal(dt);
   // 일터 쇠똥구리가 자기 집에서 일꾼 쇠똥구리를 내보냄
   if (game.state === 'play') {
     const gap = DISPATCH_GAP / (game.fx.swarm > 0 ? 3 : 1);
@@ -1994,7 +2394,7 @@ function updateGame(dt) {
         const t = findTarget(a.color, h.x, h.y);
         if (!t) { a.cool = 0; return; }
         game.reserved[t.r][t.c] = true;
-        game.carriers.push({ color: a.color, owner: a.owner, x: h.x, y: h.y, r: t.r, c: t.c, E: t.path.E, inner: t.path.inner,
+        game.carriers.push({ id: ++game.crSeq, color: a.color, owner: a.owner, x: h.x, y: h.y, r: t.r, c: t.c, E: t.path.E, inner: t.path.inner,
           pts: t.path.go, i: 0, state: 'go', walk: Math.random(), ang: -PI / 2, roll: 0, lag: -a.cool });
         a.dispatched++; a.cool += gap;
         if (a.dispatched >= a.total) {          // 다 보냈으면 바로 사라짐
@@ -2037,23 +2437,24 @@ function updateGame(dt) {
           clearCell(cr.r, cr.c);
           game.reach = reachMap(game.grid);
           game.remaining--;
-          if (game.items.has(key)) { cr.item = game.items.get(key); game.items.delete(key); }
+          if (game.items.has(key)) {   // 숨은 아이템: 집는 순간 이 자리에서 발동
+            const type = game.items.get(key); game.items.delete(key);
+            cr.item = type;
+            activateItem(type, cr.x, cr.y);
+          }
           cr.state = 'back'; cr.pts = backPath(cr); cr.i = 0;
-          vibrate(12);
+          vibrate(12);   // 안드로이드: 짧은 진동
+          pickSound();   // 아이폰 등 진동이 안 되는 폰: 작은 '톡' 소리
         } else {
           cr.done = true;
           game.score[cr.owner || 0]++;
           burst(HOLE.x, HOLE.y - 4, COLORS[cr.color], 3);
-          if (cr.item) activateItem(cr.item);
           if (time - lastBeep > 0.05) { lastBeep = time; beep(1100 + Math.random() * 300, 0.03, 0.015); }
         }
       }
     }
   }
   game.carriers = game.carriers.filter(c => !c.done);
-
-  for (const p of game.particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
-  game.particles = game.particles.filter(p => p.life > 0);
 
   if (game.state === 'play') {
     if (game.remaining === 0 && game.carriers.length === 0) {
@@ -2065,8 +2466,11 @@ function updateGame(dt) {
       if (!busy && !slotCanWork() && !canPickAny()) {
         game.stuckT += dt;
         if (game.stuckT > 0.9) {
-          if (mode === 'versus') endVersus(1 - game.player, false);
-          else { game.state = 'fail'; overlay = 'fail'; melody([392, 330, 262], 150, 0.05); }
+          if (mode === 'versus') { netSend({ t: 'vs', kind: 'stuck' }); endVersus(false, '일터가 꽉 막혔어요'); }
+          else {
+            game.state = 'fail'; overlay = 'fail'; melody([392, 330, 262], 150, 0.05);
+            if (online()) netSend({ t: 'end', kind: 'fail' });
+          }
         }
       } else game.stuckT = 0;
     }
@@ -2116,23 +2520,23 @@ function pxStar(x, y, s, color) {
 // 밝은 모래색 바닥 (어두운 쇠똥구리도 잘 보이게)
 const PAD = { soil: '#d7b88a', soilDot: '#c9a676', panel: '#ead7b2', slot: '#f7ecd4', slotLine: '#a8875e', col: '#f4e6c8', colLine: '#a8875e', front: '#fff6dc', dash: '#b89870' };
 function drawGround() {
-  ctx.fillStyle = '#8fd168'; ctx.fillRect(0, 0, W, 412);
+  ctx.fillStyle = '#8fd168'; ctx.fillRect(0, 0, W, GROUND_Y);
   ctx.fillStyle = '#7cc058';
   for (let i = 0; i < 140; i++) {
-    const x = (i * 73) % W, y = (i * 151) % 404;
+    const x = (i * 73) % W, y = (i * 151) % (GROUND_Y - 8);
     ctx.fillRect(x - x % 4, y - y % 4, 4, 4);
   }
   ctx.fillStyle = '#a8e080';
   for (let i = 0; i < 50; i++) {
-    const x = (i * 131 + 17) % W, y = (i * 97 + 31) % 404;
+    const x = (i * 131 + 17) % W, y = (i * 97 + 31) % (GROUND_Y - 8);
     ctx.fillRect(x - x % 4, y - y % 4, 4, 8);
   }
-  ctx.fillStyle = PAD.soil; ctx.fillRect(0, 412, W, H - 412);
+  ctx.fillStyle = PAD.soil; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
   ctx.fillStyle = '#8fd168';
-  for (let x = 0; x < W; x += 8) ctx.fillRect(x, 412, 8, (x / 8) % 3 === 0 ? 8 : 4);
+  for (let x = 0; x < W; x += 8) ctx.fillRect(x, GROUND_Y, 8, (x / 8) % 3 === 0 ? 8 : 4);
   ctx.fillStyle = PAD.soilDot;
   for (let i = 0; i < 90; i++) {
-    const x = (i * 97) % W, y = 424 + (i * 53) % 376;
+    const x = (i * 97) % W, y = GROUND_Y + 12 + (i * 53) % (H - GROUND_Y - 12);
     ctx.fillRect(x - x % 4, y - y % 4, 4 + (i % 2) * 4, 4);
   }
 }
@@ -2179,7 +2583,7 @@ function drawMenu() {
   drawSprite('beetleWalk' + (Math.floor(time * 6 + 1) % 2), 'B', 0, 2, 362, 52, 1, true);
   const ci = continueIdx();
   const cl = `▶ ${cleared > 0 ? '이어하기' : '시작하기'} · ${ci + 1}. ${STAGES[ci].name}`;
-  button(30, 106, 244, 44, cl, () => startStage(ci), '#ffd34d', '#3a2412', fitSize(cl, 226, 16));
+  button(30, 106, 244, 44, cl, () => chooseStage(ci), '#ffd34d', '#3a2412', fitSize(cl, 226, 16));
   const mcol = mode === 'solo' ? '#f3e3c3' : mode === 'coop' ? '#9fe08a' : '#ffa8c4';
   button(280, 106, 110, 44, MODE_LABEL[mode], cycleMode, mcol, '#3a2412', 14);
 
@@ -2200,7 +2604,7 @@ function drawMenu() {
       const label = `${i + 1}. ${st.name}`;
       text(label, cx + cw / 2, cy + 112, fitSize(label, cw - 10, 12), '#3a2412');
       if (done) { pxBox(cx + cw - 26, cy + 4, 22, 22, '#5cc45a'); text('✓', cx + cw - 15, cy + 15, 12, '#fff'); }
-      btns.push({ x: cx, y: cy, w: cw, h: ch, fn: () => startStage(i), inst: null });
+      btns.push({ x: cx, y: cy, w: cw, h: ch, fn: () => chooseStage(i), inst: null });
     } else {
       const lx = cx + cw / 2, ly = cy + 54;
       ctx.fillStyle = '#5c4a38';
@@ -2211,13 +2615,14 @@ function drawMenu() {
     }
   });
   button(78, H - 64, 120, 44, '게임 방법', () => { overlay = 'help'; }, '#7cc6f2', '#123a52', 16);
-  button(204, H - 64, 138, 44, '📷 내 사진으로', pickPhoto, '#ffb0d0', '#3a2412', 15);
+  button(204, H - 64, 138, 44, '📷 내 사진으로', () => { if (mode !== 'solo') { mode = 'solo'; saveProgress(); toast('내 사진은 혼자 하기로 해요'); } pickPhoto(); }, '#ffb0d0', '#3a2412', 15);
   if (menuPage > 0) button(18, H - 64, 52, 44, '◀', () => { menuPage--; }, '#f3e3c3', '#3a2412', 16);
   if (menuPage < pages - 1) button(W - 70, H - 64, 52, 44, '▶', () => { menuPage++; }, '#f3e3c3', '#3a2412', 16);
   if (!store.persistent) text('⚠ 이 화면에서는 저장이 안 돼요. 크롬·사파리 등 브라우저로 열어 주세요.', W / 2, 792, 11, '#ffb3a3');
 }
 function goMenu() {
-  screen = 'menu'; overlay = null; games = []; game = null;
+  if (net) { netSend({ t: 'bye' }); netClose(); }
+  screen = 'menu'; overlay = null; games = []; game = null; lobby = null;
   menuPage = Math.floor(continueIdx() / PER_PAGE);
 }
 
@@ -2225,18 +2630,31 @@ function goMenu() {
 function shakeOf(a) { return a.shake > 0 ? Math.round(Math.sin(a.shake * 60) * 5 * (a.shake / 0.4)) : 0; }
 function drawPlay() {
   const g = game;
-  const vs = mode === 'versus';
-  pxBox(8, 8, W - 16, 58, vs ? shade(PCOL[g.player], -0.45) : '#4a3020');
+  const on = online(), vs = mode === 'versus', host = on && net.role === 'host';
+  pxBox(8, 8, W - 16, 58, on ? shade(PCOL[g.player], -0.45) : '#4a3020');
   button(16, 16, 44, 38, '◀', goMenu, '#f3e3c3', '#3a2412', 16);
-  button(vs ? W - 76 : W - 132, 16, 58, 38, `${speed}배속`, cycleSpeed, speed > 1 ? '#ffd34d' : '#f3e3c3', '#3a2412', 12);
-  if (!vs) button(W - 68, 16, 52, 38, '다시', () => startStage(g.idx), '#f3e3c3', '#3a2412', 12);
-  const title = (vs ? `${g.player + 1}P · ` : '') + `${g.idx + 1}. ${STAGES[g.idx].name}`;
-  const tx = vs ? (68 + W - 80) / 2 : (68 + W - 136) / 2;
-  text(title, tx, 27, fitSize(title, 196, 16), '#ffffff');
+  // 배속: 협동은 방장이 정하고(손님이 누르면 방장에게 요청), 경쟁은 공정하게 고정
+  const speedFn = vs && on ? () => toast('대결 중엔 배속이 고정돼요') : on && !host ? () => netSend({ t: 'speed' }) : cycleSpeed;
+  button(on ? W - 76 : W - 132, 16, 58, 38, `${speed}배속`, speedFn, speed > 1 ? '#ffd34d' : '#f3e3c3', '#3a2412', 12);
+  if (!on) button(W - 68, 16, 52, 38, '다시', () => startStage(g.idx), '#f3e3c3', '#3a2412', 12);
+  const who = on ? (vs ? '대결 · ' : '협동 · ') : '';
+  const title = who + `${g.idx + 1}. ${STAGES[g.idx].name}`;
+  const tx = on ? (68 + W - 80) / 2 : (68 + W - 136) / 2;
+  text(title, tx, 25, fitSize(title, 196, 16), '#ffffff');
   const pr = 1 - g.remaining / g.total;
-  pxBox(tx - 102, 40, 204, 16, OUTLINE, OUTLINE, 2);
-  ctx.fillStyle = '#ffd34d'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 10);
-  ctx.fillStyle = '#fff3a0'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 3);
+  if (vs && on) {
+    // 경쟁: 나(위)와 상대(아래) 진행 막대
+    const op = g.opp ? 1 - g.opp.rem / g.opp.total : 0;
+    for (const [y, p, c, label] of [[38, pr, '#ffd34d', '나'], [52, op, '#ff8fb0', '상대']]) {
+      text(label, tx - 104, y + 5, 10, '#ffffff', 'right');
+      pxBox(tx - 100, y, 200, 11, OUTLINE, OUTLINE, 1);
+      ctx.fillStyle = c; ctx.fillRect(tx - 98, y + 2, Math.round(196 * p), 7);
+    }
+  } else {
+    pxBox(tx - 102, 40, 204, 16, OUTLINE, OUTLINE, 2);
+    ctx.fillStyle = '#ffd34d'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 10);
+    ctx.fillStyle = '#fff3a0'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 3);
+  }
 
   ctx.drawImage(g.pic, g.gx, g.gy, g.C * g.cs, g.R * g.cs);
 
@@ -2265,8 +2683,9 @@ function drawPlay() {
   if (mode === 'coop' && g.state === 'play') {
     const c = PCOL[g.turn];
     ctx.fillStyle = c; ctx.fillRect(10, Q.y - 6, W - 20, 4); ctx.fillRect(10, H - 10, W - 20, 4);
-    pxBox(W / 2 - 54, Q.y - 16, 108, 22, c, OUTLINE, 2);
-    text(`${g.turn + 1}P 차례`, W / 2, Q.y - 5, 14, '#ffffff', 'center', OUTLINE);
+    pxBox(W / 2 - 60, Q.y - 16, 120, 22, c, OUTLINE, 2);
+    const mine = g.turn === g.player;
+    text(mine ? '내 차례!' : '친구 차례…', W / 2, Q.y - 5, 14, '#ffffff', 'center', OUTLINE);
   }
 
   // 대기열
@@ -2293,14 +2712,14 @@ function drawPlay() {
       if (i === 0) {
         const on = Math.floor(time * 3) % 2 === 0;
         ctx.fillStyle = mode === 'coop' ? PCOL[g.turn] : (on ? '#e0a020' : '#c07a10');
-        const bx = Math.round(x - 30), by = Math.round(a.y - 30), bw = 60, bh = 60;
+        const bx = Math.round(x - 26), by = Math.round(a.y - 24), bw = 52, bh = 48;
         for (const [cx, cy, sx, sy] of [[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]]) {
           ctx.fillRect(sx > 0 ? cx : cx - 10, sy > 0 ? cy : cy - 3, 10, 3);
           ctx.fillRect(sx > 0 ? cx : cx - 3, sy > 0 ? cy : cy - 10, 3, 10);
         }
       }
-      drawSprite('beetle0', a.color, 0, 3, x, a.y, i === 0 ? 1 : 0.85);
-      text(String(a.total), x, a.y + 9, 16, '#ffffff', 'center', OUTLINE);
+      drawSprite('beetle0', a.color, 0, CARD_PX, x, a.y, i === 0 ? 1 : 0.85);
+      text(String(a.total), x, a.y + 7, 14, '#ffffff', 'center', OUTLINE);
     }
   });
   ctx.restore();
@@ -2309,11 +2728,11 @@ function drawPlay() {
   g.slots.forEach(a => {
     if (!a) return;
     const fr = Math.floor(time * 6) % 2;
-    drawSprite('beetle' + fr, a.color, 0, 3, a.x + shakeOf(a), a.y);
-    text(String(a.total - a.dispatched), a.x, a.y + 9, 16, '#ffffff', 'center', OUTLINE);
+    drawSprite('beetle' + fr, a.color, 0, CARD_PX, a.x + shakeOf(a), a.y);
+    text(String(a.total - a.dispatched), a.x, a.y + 7, 14, '#ffffff', 'center', OUTLINE);
     if (mode === 'coop') {
-      pxBox(a.x - 34, a.y - 42, 22, 16, PCOL[a.owner], OUTLINE, 2);
-      text(`${a.owner + 1}P`, a.x - 23, a.y - 34, 10, '#ffffff');
+      pxBox(a.x - 34, a.y - 30, 22, 16, PCOL[a.owner], OUTLINE, 2);
+      text(`${a.owner + 1}P`, a.x - 23, a.y - 22, 10, '#ffffff');
     }
   });
 
@@ -2361,14 +2780,33 @@ function drawPlay() {
   }
   ctx.globalAlpha = 1;
 
+  // 아이템을 집은 자리: 퍼지는 도트 고리 + 떠오르는 이름
+  for (const p of g.pops) {
+    const k = Math.min(1, p.t / 0.5);
+    ctx.globalAlpha = Math.max(0, 1 - p.t / 1.4);
+    ctx.fillStyle = p.color;
+    const rr = 6 + k * 26;
+    for (let a = 0; a < 16; a++) {
+      const x = p.x + Math.cos(a * PI / 8) * rr, y = p.y + Math.sin(a * PI / 8) * rr;
+      ctx.fillRect(Math.round(x) - 2, Math.round(y) - 2, 4, 4);
+    }
+    const ly = p.y - 14 - p.t * 26;
+    ctx.font = `14px ${FONT}`;
+    const w = ctx.measureText(p.text).width + 12;
+    pxBox(p.x - w / 2, ly - 11, w, 22, p.color, OUTLINE, 2);
+    text(p.text, p.x, ly, 14, '#3a2412');
+    ctx.globalAlpha = 1;
+  }
+
   // 아이템 발동 배너
   if (g.banner) {
+    // 그림 위쪽에 작게 (아이템이 나온 자리를 가리지 않게)
     const b = g.banner, k = Math.min(1, (1.6 - b.t) / 0.2);
-    const size = Math.round(26 * (0.6 + 0.4 * easeBack(k)));
+    const size = Math.round(18 * (0.6 + 0.4 * easeBack(k)));
     ctx.globalAlpha = Math.min(1, b.t * 3);
-    pxBox(W / 2 - 150, PIC.y + PIC.h / 2 - 40, 300, 78, b.color, OUTLINE, 4);
-    text(b.text, W / 2, PIC.y + PIC.h / 2 - 14, size, '#3a2412');
-    text(b.sub, W / 2, PIC.y + PIC.h / 2 + 18, 13, '#3a2412');
+    pxBox(W / 2 - 120, PIC.y + 2, 240, 46, b.color, OUTLINE, 3);
+    text(b.text, W / 2, PIC.y + 17, size, '#3a2412');
+    text(b.sub, W / 2, PIC.y + 36, 11, '#3a2412');
     ctx.globalAlpha = 1;
   }
   // 이 화면의 안내 문구
@@ -2376,23 +2814,15 @@ function drawPlay() {
     ctx.font = `14px ${FONT}`;
     const w = Math.min(W - 30, ctx.measureText(g.toast.text).width + 36);
     ctx.globalAlpha = Math.min(1, g.toast.t * 3);
-    pxBox(W / 2 - w / 2, 488, w, 40, '#2a1a10', OUTLINE, 3);
-    text(g.toast.text, W / 2, 508, 14, '#ffffff');
+    pxBox(W / 2 - w / 2, 448, w, 40, '#2a1a10', OUTLINE, 3);
+    text(g.toast.text, W / 2, 468, 14, '#ffffff');
     ctx.globalAlpha = 1;
   }
 }
 
-// 경쟁 모드: 아래(1P)는 그대로 절반 크기, 위(2P)는 180도 돌려서 마주 보게
-function viewTransform(i) {
-  if (mode !== 'versus') return;
-  if (i === 0) { ctx.translate(105, 400); ctx.scale(0.5, 0.5); }
-  else { ctx.translate(315, 400); ctx.rotate(PI); ctx.scale(0.5, 0.5); }
-}
-function toLocal(i, x, y) {
-  if (mode !== 'versus') return { x, y };
-  if (i === 0) return { x: (x - 105) * 2, y: (y - 400) * 2 };
-  return { x: (315 - x) * 2, y: (400 - y) * 2 };
-}
+// (한 화면 나누기는 없어지고 각자 폰에서 하므로 좌표 변환 없음)
+function viewTransform(i) {}
+function toLocal(i, x, y) { return { x, y }; }
 
 // ================== 오버레이 ==================
 function panel(y, h) {
@@ -2447,35 +2877,65 @@ function drawClear() {
     const bt = Math.min(1, (t - 0.6) / 0.4);
     const size = Math.round(28 * (0.6 + 0.4 * easeBack(bt)));
     text(custom ? '내 사진 완성!' : last ? '모든 스테이지 클리어!' : '냠냠! 클리어!', W / 2, 446, size, '#ffe08a', 'center', OUTLINE);
-    const sub = mode === 'coop' ? `팀워크 최고! 1P ${g.score[0]}개 · 2P ${g.score[1]}개` : `'${STAGES[g.idx].name}' 을(를) 다 먹었어요`;
+    const sub = mode === 'coop' ? `팀워크 최고! 방장 ${g.score[0]}개 · 친구 ${g.score[1]}개` : `'${STAGES[g.idx].name}' 을(를) 다 먹었어요`;
     text(sub, W / 2, 484, 14, '#ffffff', 'center', OUTLINE);
   }
   if (t > 1.0) {
-    if (custom) button(W / 2 - 100, 516, 200, 54, '📷 다른 사진으로', pickPhoto, '#ffb0d0');
-    else if (!last) button(W / 2 - 100, 516, 200, 54, '다음 스테이지 ▶', () => startStage(g.idx + 1));
-    button(W / 2 - 70, last ? 524 : 586, 140, 44, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    if (online()) {
+      if (net.role === 'host' && !last) button(W / 2 - 100, 516, 200, 54, '다음 스테이지 ▶', () => netStartGame(g.idx + 1));
+      else if (net.role !== 'host') text('방장이 다음 스테이지를 고르는 중…', W / 2, 540, 14, '#ffe7a3', 'center', OUTLINE);
+      button(W / 2 - 70, 586, 140, 44, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
+    } else {
+      if (custom) button(W / 2 - 100, 516, 200, 54, '📷 다른 사진으로', pickPhoto, '#ffb0d0');
+      else if (!last) button(W / 2 - 100, 516, 200, 54, '다음 스테이지 ▶', () => startStage(g.idx + 1));
+      button(W / 2 - 70, last ? 524 : 586, 140, 44, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    }
   }
 }
-// 경쟁 모드 결과: 양쪽에 각자 방향으로 승패 표시
+// 경쟁 결과 (내 폰 기준)
 function drawVsEnd() {
-  const t = clearT;
-  ctx.fillStyle = `rgba(30,18,40,${Math.min(0.7, t * 1.6)})`; ctx.fillRect(0, 0, W, H);
-  drawConfetti();
-  for (const i of [0, 1]) {
-    ctx.save();
-    if (i === 1) { ctx.translate(W, 400); ctx.rotate(PI); ctx.translate(0, -400); }
-    const win = vsWinner === i;
-    const k = Math.min(1, t / 0.5);
-    const size = Math.round((win ? 34 : 26) * (0.6 + 0.4 * easeBack(k)));
-    pxBox(60, 490, W - 120, 120, win ? '#ffe08a' : '#d8d0c4', OUTLINE, 4);
-    text(win ? `${i + 1}P 승리!` : `${i + 1}P 아쉬워요`, W / 2, 530, size, win ? '#c2561b' : '#5c4a38');
-    text(win ? '먼저 다 먹었어요 🎉' : '다음엔 이길 수 있어요!', W / 2, 572, 14, '#3a2412');
-    ctx.restore();
-  }
+  const t = clearT, win = vsWin;
+  ctx.fillStyle = `rgba(30,18,40,${Math.min(0.75, t * 1.6)})`; ctx.fillRect(0, 0, W, H);
+  if (win) { drawRays(W / 2, 300, Math.min(0.25, t * 0.5)); drawConfetti(); }
+  const k = Math.min(1, t / 0.5);
+  pxBox(50, 220, W - 100, 180, OUTLINE, OUTLINE, 4);
+  pxBox(50, 214, W - 100, 180, win ? '#ffe08a' : '#d8d0c4', OUTLINE, 4);
+  text(win ? '승리!' : '아쉬워요', W / 2, 262, Math.round(36 * (0.6 + 0.4 * easeBack(k))), win ? '#c2561b' : '#5c4a38');
+  text(vsNote || (win ? '먼저 다 먹었어요' : '상대가 먼저 다 먹었어요'), W / 2, 306, 14, '#3a2412');
+  drawSprite('beetlePush' + (Math.floor(time * 6) % 2), win ? 'Y' : 'A', 0, 3, W / 2 - 16, 356);
+  drawFoodBall(W / 2 + 14, 360, 9, win ? 'R' : 'A', time * 3);
   if (t > 0.8) {
-    button(W / 2 - 75, 372, 150, 26, '다시 대결', () => startStage(game.idx), '#ffd34d', '#3a2412', 14);
-    button(W / 2 - 75 + 160, 372, 60, 26, '목록', goMenu, '#e8dcc4', '#3a2412', 12);
+    if (online() && net.role === 'host') button(W / 2 - 90, 420, 180, 50, '다시 대결', () => netStartGame(game.idx), '#ffd34d');
+    else if (online()) text('방장이 다시 시작할 수 있어요', W / 2, 444, 14, '#ffe7a3', 'center', OUTLINE);
+    button(W / 2 - 70, 484, 140, 44, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
   }
+}
+// 온라인 방 (로비)
+function drawLobby() {
+  panel(150, 470);
+  text(MODE_LABEL[mode], W / 2, 186, 24, '#3a2412');
+  const name = `${lobby.stage + 1}. ${STAGES[lobby.stage].name}`;
+  text(`방장이 되면 '${name}' 으로 시작해요`, W / 2, 216, fitSize(`방장이 되면 '${name}' 으로 시작해요`, 330, 13), '#5c4a38');
+  button(70, 240, 280, 52, '⚡ 빠른 매칭 (들어온 순서대로)', quickMatch, '#ffd34d', '#3a2412', 15);
+  button(70, 304, 280, 46, '🏠 방 만들기 (번호 받기)', createRoom, '#9fe08a', '#3a2412', 15);
+  button(70, 362, 280, 46, '🔑 방 번호로 들어가기', joinRoom, '#bfe6ff', '#3a2412', 15);
+  // 상태 안내 (기다리는 중이면 점이 움직임)
+  const busy = net && !online();
+  const dots = busy ? '.'.repeat(1 + Math.floor(time * 2) % 3) : '';
+  const lines = wrapText(lobby.status + dots, 300, 14);
+  lines.forEach((l, i) => text(l, W / 2, 438 + i * 22, 14, '#3a2412'));
+  if (net && net.code && !online()) text(net.code, W / 2, 512, 40, '#c2561b', 'center', OUTLINE);
+  button(W / 2 - 60, 556, 120, 44, '취소', () => { netClose(); lobby = null; overlay = null; }, '#e8dcc4', '#3a2412', 16);
+}
+function wrapText(t, maxW, size) {
+  ctx.font = `${size}px ${FONT}`;
+  const out = []; let line = '';
+  for (const ch of t) {
+    if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ''; }
+    line += ch;
+  }
+  if (line) out.push(line);
+  return out.slice(0, 3);
 }
 function drawOverlay() {
   if (overlay === 'help') {
@@ -2490,10 +2950,10 @@ function drawOverlay() {
       ['', '같은 색 음식을 가져와요.'],
       ['', '올 땐 거꾸로 굴려서 굴로 쏙!'],
       ['l', '사슬로 묶인 둘은 함께 맨 위에 있어야 해요.'],
-      ['i', '음식 속 숨은 아이템: 질주 · 총출동 · 사슬 끊기'],
-      ['m', '메뉴의 모드 버튼: 혼자 / 협동 / 경쟁'],
-      ['', '협동: 둘이 번갈아 고르기'],
-      ['', '경쟁: 폰을 가운데 두고 마주 보고 대결'],
+      ['i', '숨은 아이템: 집는 순간 그 자리에서 발동!'],
+      ['m', '모드 버튼: 혼자 / 협동 온라인 / 경쟁 온라인'],
+      ['', '협동: 각자 폰으로 한 그림을 번갈아 골라요'],
+      ['', '경쟁: 각자 폰으로 같은 그림 먼저 먹기 대결'],
       ['p', '📷 내 사진으로: 사진을 도트 음식으로 바꿔서 플레이'],
       ['s', '배속 버튼: 1·2·3·5·9배속'],
       ['x', '일터가 꽉 막히면 실패!'],
@@ -2518,13 +2978,21 @@ function drawOverlay() {
     drawClear();
   } else if (overlay === 'vsEnd') {
     drawVsEnd();
+  } else if (overlay === 'lobby') {
+    drawLobby();
   } else if (overlay === 'fail') {
     panel(220, 300);
     text('쇠똥구리들이 꼼짝 못 해요!', W / 2, 266, 20, '#b33a2a');
     text('일터가 꽉 차서 더 옮길 수 없어요.', W / 2, 300, 14, '#3a2412');
     drawSprite('beetle' + (Math.floor(time * 4) % 2), 'R', 0, 3, W / 2, 352);
-    button(W / 2 - 80, 400, 160, 50, '다시 하기', () => startStage(game.idx));
-    button(W / 2 - 70, 462, 140, 42, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    if (online()) {
+      if (net.role === 'host') button(W / 2 - 80, 400, 160, 50, '다시 하기', () => netStartGame(game.idx));
+      else text('방장이 다시 시작할 수 있어요', W / 2, 424, 14, '#5c4a38');
+      button(W / 2 - 70, 462, 140, 42, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
+    } else {
+      button(W / 2 - 80, 400, 160, 50, '다시 하기', () => startStage(game.idx));
+      button(W / 2 - 70, 462, 140, 42, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    }
   }
 }
 
@@ -2533,8 +3001,8 @@ function drawToast() {
   ctx.font = `14px ${FONT}`;
   const w = Math.min(W - 30, ctx.measureText(toastMsg.text).width + 36);
   ctx.globalAlpha = Math.min(1, toastMsg.t * 3);
-  pxBox(W / 2 - w / 2, 488, w, 40, '#2a1a10', OUTLINE, 3);
-  text(toastMsg.text, W / 2, 508, 14, '#ffffff');
+  pxBox(W / 2 - w / 2, 448, w, 40, '#2a1a10', OUTLINE, 3);
+  text(toastMsg.text, W / 2, 468, 14, '#ffffff');
   ctx.globalAlpha = 1;
 }
 
@@ -2572,22 +3040,26 @@ cvs.addEventListener('pointerdown', e => {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) {} }
   else if (ac.state === 'suspended') ac.resume();
   const s = toScreen(e);
-  const inst = mode === 'versus' && screen === 'play' ? (s.y >= 400 ? 0 : 1) : 0;
   for (let i = btns.length - 1; i >= 0; i--) {
     const b = btns[i];
-    let p = s;
-    if (b.inst !== null && b.inst !== undefined) { if (b.inst !== inst) continue; p = toLocal(inst, s.x, s.y); }
-    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h + 4) { beep(660, 0.05, 0.03); b.fn(); return; }
+    if (s.x >= b.x && s.x <= b.x + b.w && s.y >= b.y && s.y <= b.y + b.h + 4) { beep(660, 0.05, 0.03); b.fn(); return; }
   }
   if (overlay || screen !== 'play' || !games.length) return;
-  game = games[inst];
+  game = games[0];
   if (!game || game.state !== 'play') return;
-  const { x, y } = toLocal(inst, s.x, s.y);
   for (let c = 0; c < 3; c++) {
     const q = game.queues[c];
     for (let i = 0; i < q.length; i++) {
       const a = q[i];
-      if (Math.abs(x - a.x) < Q.colW / 2 && Math.abs(y - a.y) < Q.rowH / 2) { tryPick(c, i); return; }
+      if (Math.abs(s.x - a.x) < Q.colW / 2 && Math.abs(s.y - a.y) < Q.rowH / 2) {
+        if (mode === 'coop' && online()) {
+          if (game.turn !== game.player) { toast('지금은 친구 차례예요'); beep(160, 0.1, 0.03); return; }
+          if (i > 0) { a.shake = 0.4; toast('맨 위에 있는 쇠똥구리만 고를 수 있어요'); return; }
+          if (net.role === 'guest') { netSend({ t: 'pick', c }); beep(520, 0.06, 0.03); return; }   // 방장에게 부탁
+        }
+        tryPick(c, i);
+        return;
+      }
     }
   }
 });
@@ -2597,7 +3069,7 @@ resize();
 if (document.fonts && document.fonts.load) document.fonts.load(`16px DungGeunMo`).catch(() => {});
 let last = performance.now();
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));   // 첫 프레임 시각이 시작보다 이를 수 있어서 음수 방지
   last = now;
   update(dt);
   btns = [];
@@ -2608,16 +3080,9 @@ function frame(now) {
     ctx.drawImage(layer('ground', drawGround), 0, 0, W, H);
     drawMenu();
   } else {
-    if (mode === 'versus') { ctx.fillStyle = '#2b1d14'; ctx.fillRect(0, 0, W, H); }
-    games.forEach((gm, i) => {
-      game = gm; curInst = mode === 'versus' ? i : null;
-      ctx.save(); viewTransform(i);
-      ctx.drawImage(layer('play', drawPlayStatic), 0, 0, W, H);
-      drawPlay();
-      ctx.restore();
-    });
     game = games[0]; curInst = null;
-    if (mode === 'versus') { ctx.fillStyle = OUTLINE; ctx.fillRect(0, 397, W, 6); ctx.fillStyle = '#ffd34d'; ctx.fillRect(0, 399, W, 2); }
+    ctx.drawImage(layer('play', drawPlayStatic), 0, 0, W, H);
+    drawPlay();
   }
   if (overlay) btns = [];
   drawToast();
