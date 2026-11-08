@@ -2240,7 +2240,7 @@ function onNetData(m) {
     case 'end':    // 협동: 방장이 끝을 알림
       if (g && g.mirror) {
         g.state = m.kind; g.score = m.score || g.score;
-        if (m.kind === 'clear') { overlay = 'clear'; clearT = 0; makeConfetti(); if (g.idx < BASE_COUNT && g.idx + 1 > cleared) { cleared = g.idx + 1; saveProgress(); } melody([523, 659, 784, 1046, 1318], 110, 0.05); }
+        if (m.kind === 'clear') { overlay = 'clear'; clearT = 0; makeConfetti(); if (g.idx < BASE_COUNT && g.idx === cleared) { cleared = g.idx + 1; saveProgress(); } melody([523, 659, 784, 1046, 1318], 110, 0.05); }
         else { overlay = 'fail'; melody([392, 330, 262], 150, 0.05); }
       }
       break;
@@ -2340,9 +2340,16 @@ function trackDist(T, a, b) {
   return Math.min(d, P - d);
 }
 // 그림 크기에 따른 위치 정보 (게임과 순서 시뮬레이션이 같이 씀)
+// 그림과 쇠똥구리 길 사이 여백 (음식 한 칸 크기 단위). 테두리 길을 걷는 쇠똥구리·굴리는 공이
+// 가장자리 음식과 겹쳐 "음식을 뚫고 지나가는" 것처럼 보이지 않게 비워 둠.
+//  위: 걷는 옆모습 반 높이 + 차선 비킴 ≈ 0.9칸
+//  아래: 굴로 돌아올 때 물구나무 선 모습(약 1.7칸 높이)이 그림 쪽으로 솟음 ≈ 1.6칸
+//  양옆: 위에서 본 몸 반 폭 + 차선 비킴 ≈ 1.15칸
+const EDGE = { t: 1.0, b: 1.7, s: 1.25 }, EDGE_PX = 3;
 function geometry(R, C) {
-  const cs = Math.floor(Math.min(PIC.w / C, PIC.h / R, 30));
-  const gx = Math.round(W / 2 - C * cs / 2), gy = Math.round(PIC.y + (PIC.h - R * cs) / 2);
+  const cs = Math.floor(Math.min((PIC.w - 2 * EDGE_PX) / (C + 2 * EDGE.s), (PIC.h - 2 * EDGE_PX) / (R + EDGE.t + EDGE.b), 30));
+  const top = PIC.y + EDGE_PX + EDGE.t * cs, bot = PIC.y + PIC.h - EDGE_PX - EDGE.b * cs;
+  const gx = Math.round(W / 2 - C * cs / 2), gy = Math.round(top + (bot - top - R * cs) / 2);
   return { cs, gx, gy, T: { x0: PIC.x - TRACK_M, y0: PIC.y - TRACK_M, x1: PIC.x + PIC.w + TRACK_M, y1: PIC.y + PIC.h + TRACK_M } };
 }
 const geoCenter = (geo, r, c) => ({ x: geo.gx + c * geo.cs + geo.cs / 2, y: geo.gy + r * geo.cs + geo.cs / 2 });
@@ -2536,7 +2543,7 @@ function startClear() {
   game.state = 'clear'; overlay = 'clear'; clearT = 0;
   if (online()) netSend({ t: 'end', kind: 'clear', score: game.score });
   makeConfetti();
-  if (game.idx < BASE_COUNT && game.idx + 1 > cleared) { cleared = game.idx + 1; saveProgress(); }
+  if (game.idx < BASE_COUNT && game.idx === cleared) { cleared = game.idx + 1; saveProgress(); }
   melody([523, 659, 784, 1046, 1318], 110, 0.05);
   vibrate(80);
 }
@@ -2555,7 +2562,7 @@ function endVersus(won, note) {
   game.state = 'over';
   overlay = 'vsEnd'; clearT = 0;
   if (won) makeConfetti(); else confetti = [];
-  if (won && game.remaining === 0 && game.idx < BASE_COUNT && game.idx + 1 > cleared) { cleared = game.idx + 1; saveProgress(); }
+  if (won && game.remaining === 0 && game.idx < BASE_COUNT && game.idx === cleared) { cleared = game.idx + 1; saveProgress(); }
   melody(won ? [523, 659, 784, 1046] : [392, 330, 262], 110, 0.05);
   vibrate(80);
 }
@@ -2853,7 +2860,7 @@ function drawMenu() {
     if (Math.floor(i / PER_PAGE) !== menuPage) return;
     const j = i % PER_PAGE;
     const cx = x0 + (j % 3) * (cw + gap), cy = y0 + Math.floor(j / 3) * (ch + 12);
-    const locked = i > cleared;
+    const locked = i > cleared && !cheatAll;
     const done = i < cleared;
     pxBox(cx, cy + 4, cw, ch, OUTLINE);
     pxBox(cx, cy, cw, ch, locked ? '#8d7b68' : '#fff6e0');
@@ -3295,6 +3302,28 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
+// ================== 치트: 모든 그림 열기 ==================
+// 확인용. 저장된 진행도는 그대로 두고, 이번 실행 동안만 메뉴의 잠긴 스테이지를 모두 엶 (다시 하면 꺼짐)
+//  PC: 키보드로 o-p-e-n 입력
+//  폰: 메뉴 제목을 2초 안에 5번 톡톡 → 뜨는 입력창(폰 키보드)에 open 입력
+let cheatAll = false, cheatKeys = '', cheatTaps = [], cheatAsk = false;
+function askCheatCode() {
+  const code = window.prompt('치트 코드를 입력하세요');
+  if (code == null) return;
+  if (code.trim().toLowerCase() === 'open') toggleCheatAll();
+  else { toast('코드가 틀렸어요'); beep(160, 0.1, 0.03); }
+}
+function toggleCheatAll() {
+  cheatAll = !cheatAll;
+  toast(cheatAll ? '🔓 치트: 모든 그림 열림' : '🔒 치트 꺼짐');
+  beep(cheatAll ? 880 : 330, 0.12, 0.04);
+}
+window.addEventListener('keydown', e => {
+  if (e.key.length !== 1) return;
+  cheatKeys = (cheatKeys + e.key.toLowerCase()).slice(-4);
+  if (cheatKeys === 'open') { cheatKeys = ''; toggleCheatAll(); }
+});
+
 // ================== 입력 ==================
 function toScreen(e) {
   const r = cvs.getBoundingClientRect();
@@ -3302,6 +3331,7 @@ function toScreen(e) {
 }
 // 사진 고르기 창은 click 이벤트 안에서 열어야 모바일(특히 아이폰)에서도 열림
 cvs.addEventListener('click', () => {
+  if (cheatAsk) { cheatAsk = false; askCheatCode(); return; }   // 입력창(폰 키보드)도 click 안에서 열어야 잘 뜸
   if (!photoWanted) return;
   photoWanted = false;
   photoInput.click();
@@ -3312,6 +3342,12 @@ cvs.addEventListener('pointerdown', e => {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) {} }
   else if (ac.state === 'suspended') ac.resume();
   const s = toScreen(e);
+  if (screen === 'menu' && !overlay && s.x >= 30 && s.x <= 390 && s.y >= 14 && s.y <= 98) {   // 제목 5번 톡톡 = 치트 코드 입력창
+    const now = performance.now();
+    cheatTaps = cheatTaps.filter(t => now - t < 2000); cheatTaps.push(now);
+    if (cheatTaps.length >= 5) { cheatTaps = []; cheatAsk = true; }
+    return;
+  }
   for (let i = btns.length - 1; i >= 0; i--) {
     const b = btns[i];
     if (s.x >= b.x && s.x <= b.x + b.w && s.y >= b.y && s.y <= b.y + b.h + 4) { beep(660, 0.05, 0.03); b.fn(); return; }
