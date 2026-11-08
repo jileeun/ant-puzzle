@@ -2415,6 +2415,13 @@ function simplify(pts) {
 const pathLen = pts => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); return s; };
 function trackToHole(E) {
   const T = game.T;
+  // 굴 바로 위(두 진입 지점 사이)로 나왔으면 테두리를 돌지 않고 곧장 굴로 들어감
+  // (안 그러면 어느 방향이든 진입 지점이 등 뒤에 있어서 그림을 한 바퀴 빙 돌아옴)
+  if (Math.abs(E.y - T.y1) < 0.5 && Math.abs(E.x - HOLE.x) < 12) {
+    const side = E.x >= HOLE.x ? 1 : -1;
+    const pts = [E, { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  }
   const route = dir => {
     // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
     const side = dir > 0 ? 1 : -1;
