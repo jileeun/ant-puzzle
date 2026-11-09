@@ -1,0 +1,3867 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#2b1d14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>데굴데굴 쇠똥구리</title>
+<style>
+  @font-face {
+    font-family: 'DungGeunMo';
+    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/DungGeunMo.woff') format('woff');
+    font-weight: normal; font-style: normal;
+  }
+  html,body{margin:0;height:100%;background:#2b1d14;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<input id="photo" type="file" accept="image/*" style="display:none">
+<!-- 온라인 협동·경쟁: 폰끼리 직접 연결 (PeerJS, 무료 공개 연결 도우미 서버 사용) -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<!-- 밸런스 테이블 (기획서 docs/GDD.md 기준) -->
+<script src="balance/balance.js"></script>
+<script>
+"use strict";
+// ================== 기본 설정 ==================
+const W = 420, H = 800;
+const cvs = document.getElementById('c');
+const mainCtx = cvs.getContext('2d');
+let ctx = mainCtx;
+const FONT = "'DungGeunMo','Malgun Gothic','Apple SD Gothic Neo',sans-serif";
+const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
+let RES = 1;
+let game = null;
+
+const COLORS = {
+  R:'#ef4f5a', O:'#ff9a3c', Y:'#ffd84a', G:'#5cc45a', E:'#2f8a47', B:'#4a82e8', M:'#2c3a80',
+  C:'#3ccbd6', L:'#bfe6ff', P:'#a66be6', K:'#ff8fbf', W:'#fbf8f0', N:'#9a6238', S:'#ead39a',
+  F:'#ffc6a0', A:'#a3abb8', D:'#26222e'
+};
+const OUTLINE = '#1c1620';
+
+const shadeMemo = {};
+function shade(hex, amt) {
+  const key = hex + amt;
+  if (shadeMemo[key]) return shadeMemo[key];
+  const n = parseInt(hex.slice(1), 16);
+  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  if (amt < 0) { r *= 1 + amt; g *= 1 + amt; b *= 1 + amt; }
+  else { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+  return (shadeMemo[key] = `rgb(${r|0},${g|0},${b|0})`);
+}
+function hexRgb(hex) { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function shuffle(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// ================== 그림 1: 글자로 그린 도트 그림 ==================
+const PIXEL_ARTS = [
+  ['하트', [
+    '.RR..RR.',
+    'RKRRRRRR',
+    'RKRRRRRR',
+    'RRRRRRRR',
+    '.RRRRRR.',
+    '..RRRR..',
+    '...RR...']],
+  ['버섯', [
+    '...RRRR...',
+    '..RWWRRR..',
+    '.RRWWRRWR.',
+    'RRRRRRRWWR',
+    'RWWRRRRRRR',
+    'RWWRRRRWRR',
+    '...SSSS...',
+    '...SSSS...',
+    '...SSSS...']],
+  ['사과', [
+    '....N.....',
+    '....NGG...',
+    '..RRNRRR..',
+    '.RRRRRRRR.',
+    'RRWRRRRRRR',
+    'RWRRRRRRRR',
+    'RRRRRRRRRR',
+    'RRRRRRRRRR',
+    '.RRRRRRRR.',
+    '..RR..RR..']],
+  ['물고기', [
+    '....BBBB....',
+    '..BBBBBBB..Y',
+    '.BBWBBBBBBYY',
+    'BBBWBBCBBYYY',
+    'BBBBBBCBBYYY',
+    '.BBBBBBBBBYY',
+    '..BBBBBBB..Y',
+    '....BBBB....']],
+  ['꽃', [
+    '...KK.KK...',
+    '..KKKKKKK..',
+    '.KKKYYYKKK.',
+    '..KKYYYKK..',
+    '.KKKYYYKKK.',
+    '..KKKKKKK..',
+    '...KK.KK...',
+    '.....G.....',
+    '.GG..G.....',
+    '..GGGG..GG.',
+    '.....GGGG..',
+    '.....G.....']],
+  ['아이스크림', [
+    '....RR....',
+    '....R.....',
+    '..KKKKKK..',
+    '.KKKKKKKK.',
+    'KKWKKKKKKK',
+    'KKKKKKKKKK',
+    '.WWWWWWWW.',
+    'WWWWWWWWWW',
+    '.OOOOOOOO.',
+    '..OONOON..',
+    '..ONOONO..',
+    '...OONO...',
+    '....OO....']],
+  ['집', [
+    '.....RR.....',
+    '....RRRR....',
+    '...RRRRRR...',
+    '..RRRRRRRR..',
+    '.RRRRRRRRRR.',
+    'RRRRRRRRRRRR',
+    '.YYYYYYYYYY.',
+    '.YBBYYYYBBY.',
+    '.YBBYNNYBBY.',
+    '.YYYYNNYYYY.',
+    '.YYYYNNYYYY.',
+    'GGGGGGGGGGGG']],
+  ['고양이', [
+    '.O........O.',
+    '.OO......OO.',
+    '.OOO....OOO.',
+    '.OOOOOOOOOO.',
+    'OOOOOOOOOOOO',
+    'OOGGOOOOGGOO',
+    'OOGNOOOOGNOO',
+    'OOOOOKKOOOOO',
+    'OOOWWWWWWOOO',
+    '.OOWWWWWWOO.',
+    '..OOOOOOOO..']],
+  ['사과나무', [
+    '....GGGG....',
+    '..GGGGGGGG..',
+    '.GGGRGGGGGG.',
+    '.GGGGGGGRGG.',
+    'GGRGGGGGGGGG',
+    'GGGGGGRGGGGG',
+    'GGGGGGGGGRGG',
+    '.GRGGGGGGGG.',
+    '..GGGGGGGG..',
+    '....GNNG....',
+    '.....NN.....',
+    '.....NN.....',
+    '....NNNN....',
+    '..AAAAAAAA..']],
+  ['무지개', [
+    '....RRRRRR....',
+    '..RROOOOOORR..',
+    '.ROOYYYYYYOOR.',
+    'ROYYGGGGGGYYOR',
+    'ROYGBBBBBBGYOR',
+    'OYGBPP..PPBGYO',
+    'WWWBP....PBWWW',
+    'WWWWW....WWWWW',
+    '.WWW......WWW.']],
+  ['딸기', [
+    '....G..G....',
+    '..GGGGGGGG..',
+    '.GGRRRRRRGG.',
+    '.RRRYRRRYRR.',
+    'RRYRRRRRRRYR',
+    'RRRRRYRRRRRR',
+    'RYRRRRRRYRRR',
+    'RRRRYRRRRRYR',
+    '.RRRRRRYRRR.',
+    '.RYRRRRRRRR.',
+    '..RRRRYRRR..',
+    '...RRRRRR...',
+    '....RRRR....']],
+  ['로켓', [
+    '.....AA.....',
+    '....AAAA....',
+    '...AAAAAA...',
+    '...AWWAAA...',
+    '...ABBBAA...',
+    '...ABBBAA...',
+    '...AAAAAA...',
+    '...AAAAAA...',
+    '..RAAAAAAR..',
+    '.RRAAAAAARR.',
+    '.RRAAAAAARR.',
+    '.RR.AAAA.RR.',
+    '....OYYO....',
+    '....OYYO....',
+    '.....OO.....']],
+  ['펭귄', [
+    '....DDDD....',
+    '..DDDDDDDD..',
+    '.DDWWDDWWDD.',
+    '.DDWDWWDWDD.',
+    '.DDWWOOWWDD.',
+    'DDDWWWWWWDDD',
+    'DDWWWWWWWWDD',
+    'DDWWWWWWWWDD',
+    '.DWWWWWWWWD.',
+    '.DDWWWWWWDD.',
+    '..DDDDDDDD..',
+    '..OOO..OOO..']],
+  ['수박', [
+    'RRRRRRRRRRRRRR',
+    'RRDRRRRDRRRRDR',
+    'WRRRRDRRRRDRRW',
+    'GWRDRRRRRDRRWG',
+    '.GWRRRRDRRRWG.',
+    '..GWWRRRRWWG..',
+    '...GGWWWWGG...',
+    '.....GGGG.....']],
+  ['나비', [
+    '.PP.......PP.',
+    'PPPP.....PPPP',
+    'PKKPP.D.PPKKP',
+    'PKKPPPDPPPKKP',
+    'PPPPPPDPPPPPP',
+    '.PPPPPDPPPPP.',
+    '..PPPPDPPPP..',
+    '.YYYPPDPPYYY.',
+    'YYKYY.D.YYKYY',
+    'YYYY..D..YYYY',
+    '.YY.......YY.']],
+  ['케이크', [
+    '.....Y.....',
+    '.....O.....',
+    '.....W.....',
+    '..R..W..R..',
+    '.KKKKKKKKK.',
+    'KKWKKWKKWKK',
+    'NNNNNNNNNNN',
+    'WWWWWWWWWWW',
+    'NNNNNNNNNNN',
+    'NNNNNNNNNNN',
+    'AAAAAAAAAAA']],
+  ['거북이', [
+    '....GGGGG.......',
+    '..GGNGGGNGG.....',
+    '.GGNNGNGNNGG....',
+    '.GGGGNNNGGGG.SS.',
+    'GGNGGGNGGGNGGSDS',
+    'GGNNGGGGGNNGSSSS',
+    '.GGGGGGGGGGGSS..',
+    '.SS.SS..SS.SS...',
+    '.SS.SS..SS.SS...']],
+  ['해님', [
+    '......O......',
+    '.O....O....O.',
+    '..O.......O..',
+    '....YYYYY....',
+    '...YYYYYYY...',
+    '...YDYYYDY...',
+    'OO.YYYYYYY.OO',
+    '...YKYYYKY...',
+    '...YYDDDYY...',
+    '....YYYYY....',
+    '..O.......O..',
+    '.O....O....O.',
+    '......O......']],
+  ['우산', [
+    '......N......',
+    '....RRWRR....',
+    '..RRRWWWRRR..',
+    '.RRRRWWWRRRR.',
+    'RRRRWWWWWRRRR',
+    'RRRRWWWWWRRRR',
+    '.R.R.R.N.R.R.',
+    '.......N.....',
+    '.......N.....',
+    '.......N.....',
+    '.....N.N.....',
+    '......N......']],
+  ['자동차', [
+    '....RRRRRR......',
+    '...RBBRBBBR.....',
+    '..RBBBRBBBBR....',
+    'RRRRRRRRRRRRRRR.',
+    'RRRRRRRRRRRRRRYY',
+    'RRDDDRRRRRDDDRR.',
+    '..DAD.....DAD...',
+    '...D.......D....']],
+  ['돛단배', [
+    '......R.......',
+    '......RR......',
+    '......N.......',
+    '.....WN.......',
+    '....WWNW......',
+    '...WWWNWW.....',
+    '..WWWWNWWW....',
+    '.WWWWWNWWWW...',
+    '......N.......',
+    'NNNNNNNNNNNNN.',
+    '.NNNNNNNNNNN..',
+    '..NNNNNNNNN...',
+    'BBBBBBBBBBBBBB',
+    '.BB.BBB.BBB.BB']],
+  ['부엉이', [
+    '.N........N.',
+    '.NN......NN.',
+    '.NNNNNNNNNN.',
+    'NNWWWNNWWWNN',
+    'NWWDWWWWDWWN',
+    'NNWWWNNWWWNN',
+    'NNNNNOONNNNN',
+    'NNSSSOOSSSNN',
+    'NNSNSSSSNSNN',
+    'NNSSSSSSSSNN',
+    '.NNSNSSNSNN.',
+    '..NNNNNNNN..',
+    '...O....O...']],
+  ['개구리', [
+    '..WWW....WWW..',
+    '.WWDWW..WWDWW.',
+    '.WWWWGGGGWWWW.',
+    'GGGGGGGGGGGGGG',
+    'GGKGGGGGGGGKGG',
+    'GGGRRRRRRRRGGG',
+    '.GGGRRRRRRGGG.',
+    '..GGGGGGGGGG..',
+    '.GGG.GGGG.GGG.',
+    'GGG........GGG']],
+  ['커피', [
+    '.WWWWWWWWWW...',
+    '.WNNNNNNNNW...',
+    '.WWWWWWWWWWWW.',
+    '.WWWWWWWWWW.WW',
+    '.WWKWWWWKWW.WW',
+    '.WWWWWWWWWWWW.',
+    '..WWWWWWWW....',
+    '.SSSSSSSSSSSS.']],
+  ['문어', [
+    '....PPPPPP....',
+    '..PPPPPPPPPP..',
+    '.PPPPPPPPPPPP.',
+    '.PPWWPPPPWWPP.',
+    '.PPWDPPPPWDPP.',
+    '.PPPPPPPPPPPP.',
+    '.PPKPPDDPPKPP.',
+    '..PPPPPPPPPP..',
+    '.PPP.PPPP.PPP.',
+    'PP.PP.PP.PP.PP',
+    'P..P..PP..P..P',
+    '.P..P....P..P.']],
+  ['선인장', [
+    '......K......',
+    '.....KYK.....',
+    '.....GGG.....',
+    '.....GGG..G..',
+    '.G...GGG.GGG.',
+    'GGG..GGG.GGG.',
+    'GGG..GGGGGGG.',
+    'GGGGGGGG.....',
+    '.GGGGGGG.....',
+    '.....GGG.....',
+    '...OOOOOOO...',
+    '...ONNNNNO...',
+    '....OOOOO....',
+    '....OOOOO....']],
+  ['고래', [
+    '...C.C.C.........',
+    '....CCC..........',
+    '.....C...........',
+    '....BBBBBB.......',
+    '..BBBBBBBBBB.....',
+    '.BBBDBBBBBBBB..BB',
+    'BBBBBBBBBBBBBBBBB',
+    'BWWWWBBBBBBBBBBB.',
+    '.WWWWWWWBBBBBBB..',
+    '..WWWWWWWWWBB....',
+    '....WWWWW........']],
+  ['피자', [
+    'OOOOOOOOOOOOO',
+    '.OOOOOOOOOOO.',
+    '.YYRRYYYYRRY.',
+    '..YRRYYGYRR..',
+    '..YYYYYYYYY..',
+    '...YYGYRRY...',
+    '...YYYYRRY...',
+    '....YRRYY....',
+    '....YRRGY....',
+    '.....YYY.....',
+    '.....YY......',
+    '......Y......']],
+  ['무당벌레', [
+    '....D..D....',
+    '.....DD.....',
+    '....DDDD....',
+    '..RRRDDRRR..',
+    '.RRDDRDRDDR.',
+    '.RRDDRDRDDRR',
+    'RRRRRRDRRRRR',
+    'RDDRRRDRRDDR',
+    'RDDRRRDRRDDR',
+    '.RRRRRDRRRR.',
+    '.RRDDRDRRRR.',
+    '..RRRRDRRR..',
+    '...RRRDRR...']],
+  ['트리', [
+    '......Y......',
+    '.....YYY.....',
+    '......G......',
+    '.....GGG.....',
+    '....GRGGG....',
+    '...GGGGBGG...',
+    '....GGGGG....',
+    '...GGBGGGG...',
+    '..GGGGGGRGG..',
+    '.GGRGGGGGGGG.',
+    '....GGGGG....',
+    '..GGGGBGGGG..',
+    '.GGGGGGGGRGG.',
+    'GGBGGGGGGGGGG',
+    '.....NNN.....',
+    '.....NNN.....']],
+  ['왕관', [
+    'Y.....Y.....Y',
+    'YY...YYY...YY',
+    'YYY.YYRYY.YYY',
+    'YYYYYYYYYYYYY',
+    'YYBYYYGYYYBYY',
+    'YYYYYYYYYYYYY',
+    'YRYYGYYYGYYRY',
+    'YYYYYYYYYYYYY',
+    'OOOOOOOOOOOOO']],
+  ['열기구', [
+    '....RRYRR....',
+    '..RRRYYYRRR..',
+    '.RRRYYYYYRRR.',
+    '.RRBYYYYYBRR.',
+    'RRRBBYYYBBRRR',
+    'RRRBBYYYBBRRR',
+    '.RRBBYYYBBRR.',
+    '.RRRBYYYBRRR.',
+    '..RRRYYYRRR..',
+    '...RRRYRRR...',
+    '....N...N....',
+    '....N...N....',
+    '....NNNNN....',
+    '....NNNNN....']],
+];
+
+// ================== 그림 2: 도형으로 그린 큰 그림 (명화풍 · 인물 · 풍경) ==================
+// 가상 좌표: 1칸 = 10. 풍경 400x300(40x30칸), 인물 300x320(30x32칸)
+const PI = Math.PI;
+const PAINT_ARTS = [
+  { name:'별이 빛나는 밤', w:40, h:30, draw(p) {
+    p.bg('M');
+    p.curve([[0,95],[70,70],[140,100],[210,72],[280,100],[340,78],[400,95]], 'B', 22);
+    p.curve([[0,140],[80,125],[150,150],[220,130]], 'B', 16);
+    p.arc(205,118,46,0,PI*1.65,'L',14);
+    p.arc(205,118,22,PI*0.5,PI*2.2,'B',12);
+    p.curve([[250,150],[300,135],[360,150],[400,140]], 'L', 10);
+    for (const [x,y,r] of [[55,38,15],[140,32,12],[265,45,14],[325,115,12],[95,115,11],[240,180,10],[40,175,10]]) {
+      p.circ(x,y,r+9,'L'); p.circ(x,y,r,'Y');
+    }
+    p.circ(355,48,40,'L'); p.circ(355,48,30,'Y'); p.circ(370,40,22,'O');
+    p.poly([[0,230],[100,200],[220,222],[330,198],[400,212],[400,300],[0,300]],'B');
+    p.poly([[0,262],[120,245],[260,258],[400,240],[400,300],[0,300]],'M');
+    for (const x of [150,190,230,270,310]) {
+      p.rect(x,232,30,26,'A'); p.poly([[x-4,234],[x+15,214],[x+34,234]],'N'); p.rect(x+10,240,10,10,'Y');
+    }
+    p.rect(262,180,10,40,'A'); p.poly([[256,184],[267,150],[278,184]],'A');
+    p.poly([[30,300],[22,230],[38,160],[52,80],[66,160],[82,230],[76,300]],'E');
+    p.curve([[52,110],[48,170],[56,250]],'D',8);
+  }},
+  { name:'귀여운 소녀', w:30, h:32, draw(p) {
+    p.bg('L'); for (const [x,y] of [[30,40],[260,60],[40,250],[270,240]]) p.circ(x,y,12,'K');
+    p.ell(150,175,110,120,'N');
+    p.poly([[40,320],[65,262],[150,248],[235,262],[260,320]],'R');
+    p.poly([[115,262],[150,300],[185,262]],'W');
+    p.rect(132,215,36,40,'F');
+    p.ell(150,160,74,78,'F');
+    p.ell(150,98,82,40,'N');
+    p.ell(95,130,26,50,'N'); p.ell(205,130,26,50,'N');
+    p.poly([[190,70],[230,50],[236,95]],'K'); p.poly([[190,70],[226,110],[236,95]],'K'); p.circ(200,78,10,'R');
+    p.ell(122,165,13,16,'D'); p.ell(178,165,13,16,'D'); p.circ(117,159,5,'W'); p.circ(173,159,5,'W');
+    p.ell(103,195,13,8,'K'); p.ell(197,195,13,8,'K');
+    p.arc(150,198,13,PI*0.15,PI*0.85,'R',5);
+  }},
+  { name:'큰 파도', w:40, h:30, draw(p) {
+    p.bg('S');
+    p.ell(300,60,60,14,'W'); p.ell(120,40,50,12,'W');
+    p.poly([[225,232],[272,188],[318,232]],'A'); p.poly([[258,202],[272,188],[286,202]],'W');
+    p.rect(0,228,400,72,'B');
+    p.poly([[0,300],[0,180],[25,120],[75,72],[135,50],[190,58],[222,88],[218,122],[194,110],[170,122],[176,150],[150,172],[122,212],[104,300]],'M');
+    p.poly([[22,300],[32,200],[62,140],[112,96],[162,86],[200,100],[192,106],[160,112],[140,142],[112,192],[92,300]],'B');
+    for (const [x,y] of [[78,72],[106,58],[136,52],[166,54],[194,66],[212,86],[216,110],[60,92],[45,115]]) p.circ(x,y,11,'W');
+    p.poly([[245,300],[288,252],[330,240],[362,254],[400,248],[400,300]],'M');
+    for (const [x,y] of [[300,250],[330,242],[356,252],[384,250]]) p.circ(x,y,9,'W');
+    p.ell(170,250,42,9,'Y',-0.35); p.ell(330,280,38,8,'Y',0.2);
+  }},
+  { name:'꼬마 마녀', w:30, h:32, draw(p) {
+    p.bg('M'); for (const [x,y] of [[30,60],[270,40],[250,200],[40,220],[60,140]]) p.circ(x,y,6,'Y');
+    p.ell(150,205,108,92,'O');
+    p.poly([[55,320],[85,268],[215,268],[245,320]],'P');
+    p.poly([[120,268],[150,292],[180,268]],'Y');
+    p.circ(150,205,72,'F');
+    p.ell(150,152,78,24,'O');
+    p.poly([[70,132],[150,0],[235,128]],'P');
+    p.poly([[150,0],[195,10],[205,40],[170,30]],'P');
+    p.ell(150,135,138,22,'P');
+    p.rect(88,108,124,16,'Y');
+    p.poly([[140,104],[150,88],[160,104]],'Y');
+    p.ell(122,210,13,16,'D'); p.ell(178,210,13,16,'D'); p.circ(117,204,5,'W'); p.circ(173,204,5,'W');
+    p.ell(102,238,13,8,'K'); p.ell(198,238,13,8,'K');
+    p.ell(150,245,10,7,'R');
+  }},
+  { name:'해바라기', w:40, h:30, draw(p) {
+    p.bg('L');
+    p.rect(0,238,400,62,'O'); p.rect(0,238,400,10,'N');
+    p.curve([[200,210],[200,140],[200,90]],'G',10);
+    p.curve([[190,210],[150,170],[118,128]],'G',10);
+    p.curve([[212,210],[250,170],[290,120]],'G',10);
+    p.curve([[180,210],[120,200],[80,190]],'G',10);
+    p.curve([[220,210],[290,205],[330,185]],'G',10);
+    p.ell(150,175,30,12,'E',-0.5); p.ell(255,170,30,12,'E',0.5);
+    p.poly([[158,300],[148,252],[166,204],[234,204],[252,252],[242,300]],'Y');
+    p.rect(150,236,100,14,'B');
+    for (const [x,y,r] of [[200,82,42],[115,122,34],[292,112,36],[78,188,26],[332,180,26]]) {
+      for (let k = 0; k < 12; k++) {
+        const a = k / 12 * PI * 2;
+        p.circ(x + Math.cos(a) * r * 0.78, y + Math.sin(a) * r * 0.78, r * 0.36, 'Y');
+      }
+      p.circ(x,y,r*0.55,'O'); p.circ(x,y,r*0.38,'N');
+    }
+  }},
+  { name:'소방관', w:30, h:32, draw(p) {
+    p.bg('L'); p.ell(40,60,40,14,'W'); p.ell(260,90,36,12,'W');
+    p.poly([[45,320],[75,262],[225,262],[255,320]],'Y');
+    p.rect(45,292,210,12,'A');
+    p.rect(132,222,36,44,'F');
+    p.circ(150,192,72,'F');
+    p.ell(150,118,90,62,'R');
+    p.ell(150,150,122,18,'R');
+    p.rect(60,140,180,10,'N');
+    p.circ(150,108,18,'Y'); p.circ(150,108,8,'O');
+    p.ell(122,195,13,16,'D'); p.ell(178,195,13,16,'D'); p.circ(117,189,5,'W'); p.circ(173,189,5,'W');
+    p.ell(102,224,13,8,'K'); p.ell(198,224,13,8,'K');
+    p.arc(150,224,14,PI*0.15,PI*0.85,'R',5);
+  }},
+  { name:'진주 귀걸이 소녀', w:30, h:32, draw(p) {
+    p.bg('M'); for (const [x,y] of [[30,40],[270,50],[40,250],[260,230]]) p.circ(x,y,6,'L');
+    p.ell(150,330,135,70,'O');
+    p.ell(150,286,62,20,'W');
+    p.rect(130,225,40,50,'F');
+    p.circ(152,180,76,'F');
+    p.ell(138,112,88,58,'B');
+    p.poly([[176,92],[236,74],[258,182],[234,236],[214,150]],'Y');
+    p.ell(124,184,13,16,'D'); p.ell(182,184,13,16,'D'); p.circ(119,178,5,'W'); p.circ(177,178,5,'W');
+    p.ell(104,212,13,8,'K'); p.ell(202,212,13,8,'K');
+    p.ell(155,228,10,8,'R');
+    p.circ(228,246,11,'W');
+  }},
+  { name:'수련 연못', w:40, h:30, draw(p) {
+    p.bg('B');
+    for (let y = 20; y < 300; y += 40) p.curve([[0,y],[100,y-8],[200,y+6],[300,y-6],[400,y+4]],'C',10);
+    p.arc(200,330,265,PI*1.15,PI*1.85,'E',16);
+    p.arc(200,348,265,PI*1.17,PI*1.83,'E',8);
+    for (const x of [90,150,200,250,310]) p.line([[x,95],[x,140]],'E',8);
+    for (const [x,y,rx,ry] of [[60,190,40,16],[150,240,46,18],[270,210,42,16],[350,262,36,14],[90,270,34,13],[220,165,34,12],[330,160,30,12]]) {
+      p.ell(x,y,rx,ry,'G'); p.poly([[x,y],[x+rx,y-4],[x+rx,y+6]],'B');
+      p.circ(x - rx * 0.2, y - 4, 10, 'K'); p.circ(x - rx * 0.2, y - 4, 5, 'Y');
+    }
+  }},
+  { name:'꽃 화관 소녀', w:30, h:32, draw(p) {
+    p.bg('Y'); for (const [x,y] of [[30,40],[270,50],[30,230],[270,230]]) p.circ(x,y,12,'W');
+    p.ell(150,185,105,100,'N');
+    p.ell(70,250,22,55,'N'); p.ell(230,250,22,55,'N');
+    p.poly([[55,320],[85,268],[215,268],[245,320]],'G');
+    p.rect(132,225,36,44,'F');
+    p.circ(150,185,72,'F');
+    p.ell(150,128,80,30,'N');
+    for (let k = 0; k < 9; k++) {
+      const x = 72 + k * 19.5, y = 108 + Math.abs(k - 4) * 4;
+      p.circ(x, y, 13, ['K','Y','W'][k % 3]); p.circ(x, y, 5, 'O');
+    }
+    p.ell(122,190,13,16,'D'); p.ell(178,190,13,16,'D'); p.circ(117,184,5,'W'); p.circ(173,184,5,'W');
+    p.ell(102,218,13,8,'K'); p.ell(198,218,13,8,'K');
+    p.arc(150,218,13,PI*0.15,PI*0.85,'R',5);
+  }},
+  { name:'붉은 산', w:40, h:30, draw(p) {
+    p.bg('B'); p.rect(0,130,400,170,'L');
+    for (const [x,y,rx] of [[70,40,50],[160,70,40],[300,35,60],[360,90,36],[40,110,30],[250,105,40]]) p.ell(x,y,rx,10,'W');
+    p.poly([[-10,300],[160,82],[240,82],[410,300]],'R');
+    p.poly([[160,82],[240,82],[262,112],[246,106],[232,128],[216,106],[200,134],[186,106],[170,124],[150,110]],'W');
+    p.curve([[175,140],[150,200],[120,260]],'O',10); p.curve([[230,140],[262,210],[300,270]],'O',10);
+    p.poly([[0,300],[0,250],[100,238],[200,262],[300,240],[400,256],[400,300]],'E');
+    for (const x of [20,60,100,330,370]) p.poly([[x-14,262],[x,226],[x+14,262]],'G');
+  }},
+  { name:'왕자님', w:30, h:32, draw(p) {
+    p.bg('P'); for (const [x,y] of [[30,40],[270,40],[30,200],[270,210]]) p.circ(x,y,7,'Y');
+    p.poly([[35,320],[70,260],[230,260],[265,320]],'R');
+    p.poly([[70,262],[230,262],[220,286],[80,286]],'W');
+    for (const x of [100,140,180,210]) p.circ(x,276,4,'D');
+    p.rect(132,222,36,40,'F');
+    p.ell(150,175,90,82,'Y');
+    p.circ(150,190,70,'F');
+    p.ell(150,136,80,30,'Y');
+    p.poly([[88,118],[88,62],[118,92],[150,52],[182,92],[212,62],[212,118]],'Y');
+    p.rect(88,104,124,14,'O');
+    p.circ(150,86,10,'R'); p.circ(108,100,7,'B'); p.circ(192,100,7,'B');
+    p.ell(122,195,13,16,'D'); p.ell(178,195,13,16,'D'); p.circ(117,189,5,'W'); p.circ(173,189,5,'W');
+    p.ell(102,222,13,8,'K'); p.ell(198,222,13,8,'K');
+    p.arc(150,222,13,PI*0.15,PI*0.85,'R',5);
+  }},
+  { name:'놀이공원', w:40, h:30, draw(p) {
+    p.bg('K'); p.rect(0,0,400,70,'P'); p.rect(0,70,400,40,'O');
+    p.circ(330,70,26,'Y');
+    p.ell(80,110,46,12,'W'); p.ell(320,140,40,10,'W');
+    p.circ(200,140,100,'W'); p.circ(200,140,88,'K');
+    for (let k = 0; k < 8; k++) {
+      const a = k / 8 * PI * 2;
+      p.line([[200,140],[200 + Math.cos(a) * 92, 140 + Math.sin(a) * 92]], 'W', 6);
+    }
+    p.circ(200,140,14,'Y');
+    ['R','Y','B','G','P','O','C','R'].forEach((k, i) => {
+      const a = i / 8 * PI * 2 + 0.2;
+      p.circ(200 + Math.cos(a) * 100, 140 + Math.sin(a) * 100, 15, k);
+    });
+    p.poly([[200,140],[150,262],[170,262]],'A'); p.poly([[200,140],[250,262],[230,262]],'A');
+    p.rect(0,250,400,50,'G');
+    p.poly([[20,262],[60,206],[100,262]],'R'); p.rect(28,262,64,30,'W'); p.rect(52,270,16,22,'R');
+    p.poly([[300,262],[345,200],[390,262]],'B'); p.rect(308,262,74,30,'Y'); p.rect(336,270,18,22,'B');
+  }},
+  { name:'모나리자', w:30, h:32, draw(p) {
+    p.bg('L');
+    p.poly([[0,150],[60,120],[110,140],[190,118],[250,140],[300,125],[300,320],[0,320]],'G');
+    p.poly([[0,200],[80,185],[150,200],[220,180],[300,195],[300,320],[0,320]],'E');
+    p.curve([[30,200],[70,240],[40,290]],'S',10);
+    p.ell(150,180,96,128,'N');
+    p.poly([[30,320],[62,240],[150,224],[238,240],[270,320]],'D');
+    p.ell(150,300,62,18,'F');
+    p.rect(132,200,36,32,'F');
+    p.ell(150,150,62,74,'F');
+    p.poly([[86,150],[100,85],[150,72],[146,100],[110,120],[96,190]],'N');
+    p.poly([[214,150],[200,85],[150,72],[154,100],[190,120],[204,190]],'N');
+    p.ell(126,152,12,7,'D'); p.ell(174,152,12,7,'D');
+    p.ell(108,178,11,7,'K'); p.ell(192,178,11,7,'K');
+    p.arc(150,180,17,PI*0.2,PI*0.8,'R',5);
+  }},
+  { name:'눈 오는 밤', w:40, h:30, draw(p) {
+    p.bg('M');
+    p.circ(330,55,28,'Y'); p.circ(342,48,22,'M');
+    for (const [x,y] of [[30,30],[90,70],[150,25],[200,90],[250,40],[60,140],[130,120],[300,130],[370,110],[20,200],[230,150],[380,190]]) p.circ(x,y,5,'W');
+    p.poly([[0,300],[0,230],[120,214],[260,234],[400,218],[400,300]],'W');
+    p.rect(150,170,110,80,'N');
+    p.poly([[135,175],[205,115],[275,175]],'R');
+    p.poly([[135,175],[205,115],[275,175],[262,175],[205,128],[148,175]],'W');
+    p.rect(166,192,30,26,'Y'); p.line([[181,192],[181,218]],'N',4);
+    p.rect(214,200,28,50,'D'); p.circ(236,226,3,'Y');
+    p.rect(232,120,16,30,'A');
+    for (const [x,s] of [[60,1],[100,0.8],[330,1],[375,0.85]]) {
+      p.poly([[x - 34 * s,250],[x,170 - 20 * s],[x + 34 * s,250]],'E');
+      p.poly([[x - 22 * s,200],[x,166 - 20 * s],[x + 22 * s,200]],'W');
+    }
+  }},
+  { name:'우주 꼬마', w:30, h:32, draw(p) {
+    p.bg('M'); p.circ(50,60,26,'P'); p.ell(50,60,40,8,'K',-0.3); for (const [x,y] of [[25,30],[275,50],[30,200],[270,220],[60,110],[250,130]]) p.circ(x,y,5,'W'); p.circ(265,290,30,'O');
+    p.poly([[45,320],[75,258],[225,258],[255,320]],'W');
+    p.rect(120,280,60,30,'A'); p.circ(135,295,6,'R'); p.circ(165,295,6,'B');
+    p.circ(150,170,118,'W');
+    p.circ(150,175,96,'L');
+    p.ell(150,190,70,70,'F');
+    p.ell(150,140,74,34,'N');
+    p.ell(124,195,13,16,'D'); p.ell(176,195,13,16,'D'); p.circ(119,189,5,'W'); p.circ(171,189,5,'W');
+    p.ell(104,222,13,8,'K'); p.ell(196,222,13,8,'K');
+    p.ell(150,228,10,7,'R');
+    p.arc(150,175,82,PI*1.1,PI*1.4,'W',10);
+    p.rect(140,40,20,20,'A'); p.circ(150,34,10,'R');
+  }},
+  { name:'절규', w:40, h:30, draw(p) {
+    p.bg('O');
+    p.curve([[0,30],[100,18],[200,44],[300,24],[400,40]],'R',18);
+    p.curve([[0,82],[120,66],[220,92],[400,72]],'Y',14);
+    p.curve([[0,120],[150,108],[260,124],[400,114]],'R',12);
+    p.poly([[150,132],[400,120],[400,250],[262,232]],'M');
+    p.curve([[200,160],[280,150],[360,165]],'B',10); p.curve([[240,200],[320,190],[400,205]],'B',10);
+    p.poly([[0,132],[150,132],[262,232],[0,244]],'E');
+    p.poly([[0,236],[400,150],[400,206],[0,310]],'N');
+    p.line([[0,222],[400,140]],'A',8);
+    p.poly([[148,310],[166,236],[234,236],[252,310]],'D');
+    p.ell(200,190,34,46,'S');
+    p.ell(164,192,11,26,'S'); p.ell(236,192,11,26,'S');
+    p.ell(187,180,8,10,'D'); p.ell(213,180,8,10,'D');
+    p.ell(200,212,8,14,'D');
+    p.line([[60,200],[64,250]],'D',8); p.line([[100,190],[104,240]],'D',8);
+  }},
+  { name:'바닷가', w:40, h:30, draw(p) {
+    p.bg('L');
+    p.circ(70,55,30,'Y');
+    p.ell(250,50,46,14,'W'); p.ell(330,80,34,10,'W');
+    p.rect(0,120,400,90,'B');
+    for (const y of [140,170,195]) p.curve([[0,y],[100,y-6],[200,y+4],[300,y-6],[400,y]],'C',8);
+    p.curve([[0,212],[100,204],[200,214],[300,204],[400,212]],'W',10);
+    p.rect(0,216,400,84,'S');
+    // 파라솔: 기둥과 천을 음식 한 칸보다 굵게 (도트로 바꿔도 모양이 남게)
+    p.rect(258,150,16,140,'N');
+    p.poly([[160,190],[266,110],[372,190]],'R');
+    p.poly([[213,150],[266,110],[248,190],[195,190]],'W'); p.poly([[319,150],[266,110],[284,190],[337,190]],'W');
+    p.circ(266,108,8,'Y');
+    p.circ(100,258,28,'W'); p.poly([[100,258],[100,230],[126,244]],'R'); p.poly([[100,258],[76,274],[100,286]],'B');
+    p.ell(355,266,24,16,'R'); p.circ(343,246,6,'D'); p.circ(367,246,6,'D');
+    p.line([[334,270],[318,260]],'R',10); p.line([[376,270],[392,260]],'R',10);
+  }},
+  { name:'버섯 마을', w:40, h:30, draw(p) {
+    p.bg('G');
+    for (const [x,y,r] of [[30,40,50],[110,20,46],[300,24,52],[380,60,44],[200,10,40]]) p.circ(x,y,r,'E');
+    p.rect(0,240,400,60,'E');
+    p.poly([[170,300],[190,240],[210,240],[230,300]],'S');
+    p.rect(140,150,120,95,'S');
+    p.ell(200,150,120,62,'R');
+    p.rect(70,150,260,6,'R');
+    for (const [x,y,r] of [[150,120,14],[205,105,16],[255,128,13],[120,150,10],[290,150,10]]) p.circ(x,y,r,'W');
+    p.ell(200,215,18,28,'N'); p.rect(182,215,36,30,'N');
+    p.circ(160,185,13,'Y'); p.circ(240,185,13,'Y');
+    for (const [x,k] of [[60,'Y'],[95,'K'],[310,'W'],[350,'Y'],[30,'P']]) { p.line([[x,280],[x,256]],'G',6); p.circ(x,252,9,k); }
+    p.rect(330,200,40,40,'S'); p.ell(350,200,40,22,'O'); p.circ(340,190,6,'W');
+  }},
+  { name:'몬드리안', w:40, h:30, draw(p) {
+    p.bg('W');
+    // 검은 선은 음식 한 칸(약 12)보다 굵은 16으로 — 도트로 바꿔도 선이 끊기지 않게
+    p.rect(0,0,168,168,'R',false); p.rect(308,228,92,72,'B',false); p.rect(0,248,82,52,'Y',false); p.rect(308,0,92,98,'Y',false);
+    p.rect(98,248,70,52,'B',false);
+    p.rect(168,0,16,300,'D',false); p.rect(292,0,16,300,'D',false);
+    p.rect(0,168,400,16,'D',false); p.rect(0,232,168,16,'D',false); p.rect(308,98,92,16,'D',false); p.rect(308,212,92,16,'D',false);
+    p.rect(82,248,16,52,'D',false);
+  }},
+  { name:'도시의 밤', w:40, h:30, draw(p) {
+    p.bg('M');
+    p.circ(70,50,26,'Y');
+    for (const [x,y] of [[150,30],[220,60],[300,25],[370,55],[30,110]]) p.circ(x,y,4,'W');
+    const bld = [[10,120,60,'P'],[70,90,50,'A'],[120,140,70,'D'],[190,70,50,'P'],[240,110,60,'A'],[300,85,45,'D'],[345,130,55,'P']];
+    for (const [x,top,w,k] of bld) {
+      p.rect(x,top,w,220 - top,k);
+      for (let yy = top + 12; yy < 205; yy += 22) for (let xx = x + 8; xx < x + w - 12; xx += 18)
+        if ((xx * 7 + yy * 3) % 5 !== 0) p.rect(xx,yy,10,10,'Y');
+    }
+    p.rect(205,40,20,32,'A'); p.line([[215,40],[215,10]],'A',5); p.circ(215,8,6,'R');
+    p.rect(0,220,400,80,'B');
+    for (const [x,top,w] of bld) for (let yy = 235; yy < 290; yy += 18) p.line([[x + 10,yy],[x + w - 10,yy]],'C',6);
+    p.curve([[0,226],[200,222],[400,226]],'L',6);
+  }},
+];
+
+// ================== 그림 처리: 확대 + 사물 테두리 + 바깥 테두리 ==================
+const MAX_C = 28, MAX_R = 30;   // 테두리 포함 최대 칸 수 (음식 한 알 약 13px, 약 450피스)
+function parseArt(art) {
+  const rows = art.length, cols = Math.max(...art.map(s => s.length));
+  const g = [];
+  for (let r = 0; r < rows; r++) {
+    g.push([]);
+    for (let c = 0; c < cols; c++) {
+      const ch = art[r][c] || '.';
+      g[r].push(ch === '.' || ch === ' ' ? null : ch);
+    }
+  }
+  return g;
+}
+function addOutline(base) {
+  const R0 = base.length, C0 = base[0].length;
+  const g = Array.from({ length: R0 + 2 }, () => Array(C0 + 2).fill(null));
+  for (let r = 0; r < R0; r++) for (let c = 0; c < C0; c++) g[r + 1][c + 1] = base[r][c];
+  const out = g.map(r => r.slice());
+  for (let r = 0; r < g.length; r++) for (let c = 0; c < g[0].length; c++) {
+    if (g[r][c]) continue;
+    let near = false;
+    for (let dr = -1; dr <= 1 && !near; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nc >= 0 && nr < g.length && nc < g[0].length && g[nr][nc]) { near = true; break; }
+    }
+    if (near) out[r][c] = 'D';
+  }
+  return out;
+}
+// 그림 속 사물 사이에 검은 선: 서로 다른 색의 큰 덩어리가 맞닿은 곳에 1칸 선을 넣는다
+// (눈·창문 같은 작은 덩어리는 그대로 둔다)
+const LINE_MIN = 24;
+function addInnerLines(g) {
+  const R = g.length, C = g[0].length;
+  const id = g.map(r => r.map(() => -1)), size = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!g[r][c] || id[r][c] >= 0) continue;
+    const k = size.length, col = g[r][c], st = [[r, c]];
+    id[r][c] = k; let n = 0;
+    while (st.length) {
+      const [y, x] = st.pop(); n++;
+      for (const [dr, dc] of D4) {
+        const ny = y + dr, nx = x + dc;
+        if (ny < 0 || nx < 0 || ny >= R || nx >= C || id[ny][nx] >= 0 || g[ny][nx] !== col) continue;
+        id[ny][nx] = k; st.push([ny, nx]);
+      }
+    }
+    size.push(n);
+  }
+  const mark = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    const v = g[r][c];
+    if (!v || v === 'D') continue;
+    for (const [dr, dc] of [[0, 1], [1, 0]]) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= R || nc >= C) continue;
+      const n = g[nr][nc];
+      if (!n || n === 'D' || n === v) continue;
+      const a = size[id[r][c]], b = size[id[nr][nc]];
+      if (a < LINE_MIN || b < LINE_MIN) continue;
+      mark.push(a >= b ? [r, c] : [nr, nc]);
+    }
+  }
+  const out = g.map(r => r.slice());
+  for (const [r, c] of mark) out[r][c] = 'D';
+  return out;
+}
+// 그림마다 배경으로 지울 색 (가장자리에서부터 이 색들로만 이어진 부분을 지움)
+// 한 칸의 문자열 = 함께 지울 색 묶음. 예: 'RW'는 빨강·흰 체크무늬 식탁보
+const STRIP = {
+  '하트 풍선': ['L', 'G'], '과일 바구니': ['L', 'RW'], '열대어': ['BC', 'S'], '줄무늬 고양이': ['PK'],
+  '사과나무 언덕': ['L', 'G', 'E', 'S'], '딸기 소풍': ['WK'], '목도리 펭귄': ['L', 'BC'], '바닷속 문어': ['BC', 'S'],
+  '잎 위의 무당벌레': ['Y'], '선물과 트리': ['M', 'S'], '보석 왕관': ['P'],
+  '별이 빛나는 밤': ['M', 'B', 'L'], '귀여운 소녀': ['L'], '큰 파도': ['S'], '꼬마 마녀': ['M'], '해바라기': ['L', 'O', 'N'],
+  '소방관': ['L', 'W'], '진주 귀걸이 소녀': ['M'], '수련 연못': ['BC'], '꽃 화관 소녀': ['Y'], '붉은 산': ['B', 'L', 'W', 'E'],
+  '왕자님': ['P'], '놀이공원': ['K', 'P', 'O', 'G'], '모나리자': ['L', 'G', 'E', 'S'], '눈 오는 밤': ['M', 'W'],
+  '우주 꼬마': ['M'], '절규': ['ORY', 'MB', 'E'], '바닷가': ['L', 'B', 'C', 'W', 'S'],
+  '버섯 마을': ['G', 'E'], '몬드리안': ['W'], '도시의 밤': ['M', 'B', 'C', 'L'],
+};
+// 배경 지우기
+//  layers가 있으면: 각 색 묶음마다 그림 가장자리에서 그 색들로만 이어진 칸을 지움
+//  없으면(사진): 가장자리에 닿은 넓은 한 색 덩어리를 차례로 지움 (그림의 1/4 이상은 남김)
+function stripBackground(src, layers) {
+  const g = src.map(r => r.slice());
+  const R = g.length, C = g[0].length, N = R * C;
+  const edge = (r, c) => r === 0 || c === 0 || r === R - 1 || c === C - 1;
+  if (layers) {
+    for (const cols of layers) {
+      const st = [];
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++)
+        if (edge(r, c) && g[r][c] && cols.includes(g[r][c])) { st.push([r, c]); g[r][c] = null; }
+      while (st.length) {
+        const [r, c] = st.pop();
+        for (const [dr, dc] of D4) {
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nc >= 0 && nr < R && nc < C && g[nr][nc] && cols.includes(g[nr][nc])) { g[nr][nc] = null; st.push([nr, nc]); }
+        }
+      }
+    }
+  } else {
+    let filled = 0; g.forEach(r => r.forEach(v => { if (v) filled++; }));
+    const keepMin = filled * 0.25, minSize = N * 0.03;
+    for (let pass = 0; pass < 8; pass++) {
+      const seen = g.map(r => r.map(() => false));
+      let best = null;
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+        if (!g[r][c] || seen[r][c]) continue;
+        const col = g[r][c], cells = [[r, c]]; seen[r][c] = true; let touch = false;
+        for (let i = 0; i < cells.length; i++) {
+          const [y, x] = cells[i];
+          if (edge(y, x)) touch = true;
+          for (const [dr, dc] of D4) {
+            const ny = y + dr, nx = x + dc;
+            if (ny >= 0 && nx >= 0 && ny < R && nx < C && !seen[ny][nx] && g[ny][nx] === col) { seen[ny][nx] = true; cells.push([ny, nx]); }
+          }
+        }
+        if (touch && cells.length >= minSize && (!best || cells.length > best.length)) best = cells;
+      }
+      if (!best || filled - best.length < keepMin) break;
+      for (const [r, c] of best) g[r][c] = null;
+      filled -= best.length;
+    }
+  }
+  // 1~4칸 부스러기 정리
+  const seen = g.map(r => r.map(() => false));
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!g[r][c] || seen[r][c]) continue;
+    const cells = [[r, c]]; seen[r][c] = true;
+    for (let i = 0; i < cells.length; i++) for (const [dr, dc] of D4) {
+      const ny = cells[i][0] + dr, nx = cells[i][1] + dc;
+      if (ny >= 0 && nx >= 0 && ny < R && nx < C && g[ny][nx] && !seen[ny][nx]) { seen[ny][nx] = true; cells.push([ny, nx]); }
+    }
+    if (cells.length <= 4) for (const [y, x] of cells) g[y][x] = null;
+  }
+  return g;
+}
+function processPixel(art) {
+  const base = parseArt(art);
+  const R0 = base.length, C0 = base[0].length;
+  const s = Math.min((MAX_C - 2) / C0, (MAX_R - 2) / R0);
+  const Rn = Math.round(R0 * s), Cn = Math.round(C0 * s);
+  const g = [];
+  for (let r = 0; r < Rn; r++) {
+    g.push([]);
+    for (let c = 0; c < Cn; c++) g[r].push(base[Math.min(R0 - 1, Math.floor((r + 0.5) * R0 / Rn))][Math.min(C0 - 1, Math.floor((c + 0.5) * C0 / Cn))]);
+  }
+  return addOutline(addInnerLines(g));
+}
+// ow > 0 이면 큰 도형마다 검은 외곽선을 그린다 (고해상도 클리어 그림용)
+function makePainter(g, used, ow = 0) {
+  const col = k => { used.add(k); return COLORS[k]; };
+  const path = pts => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); };
+  const edge = big => { if (ow && big) { g.lineWidth = ow; g.strokeStyle = COLORS.D; g.lineJoin = 'round'; g.stroke(); } };
+  return {
+    bg(k) { g.fillStyle = col(k); g.fillRect(-50, -50, 2000, 2000); },
+    // outline=false: 체크무늬 같은 바탕 무늬는 테두리 없이
+    rect(x, y, w, h, k, outline = true) { g.fillStyle = col(k); g.beginPath(); g.rect(x, y, w, h); g.fill(); edge(outline && Math.min(w, h) >= 20 && w < 390); },
+    circ(x, y, r, k) { g.fillStyle = col(k); g.beginPath(); g.arc(x, y, r, 0, PI * 2); g.fill(); edge(r >= 12); },
+    ell(x, y, rx, ry, k, rot = 0) { g.fillStyle = col(k); g.beginPath(); g.ellipse(x, y, rx, ry, rot, 0, PI * 2); g.fill(); edge(Math.min(rx, ry) >= 10); },
+    poly(pts, k) {
+      g.fillStyle = col(k); path(pts); g.closePath(); g.fill();
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      edge(Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) >= 20);
+    },
+    line(pts, k, w) { g.strokeStyle = col(k); g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; path(pts); g.stroke(); },
+    curve(pts, k, w) {
+      g.strokeStyle = col(k); g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+        g.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+      }
+      const l = pts[pts.length - 1]; g.lineTo(l[0], l[1]); g.stroke();
+    },
+    arc(x, y, r, a0, a1, k, w) { g.strokeStyle = col(k); g.lineWidth = w; g.lineCap = 'round'; g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke(); },
+    // 매끈한 하트 (베지어 곡선 하나로 그려서 이음새가 없음)
+    heart(cx, cy, s, k) {
+      g.fillStyle = col(k); g.beginPath();
+      g.moveTo(cx, cy + s * 1.15);
+      g.bezierCurveTo(cx - s * 1.75, cy + s * 0.15, cx - s * 1.05, cy - s * 1.1, cx, cy - s * 0.38);
+      g.bezierCurveTo(cx + s * 1.05, cy - s * 1.1, cx + s * 1.75, cy + s * 0.15, cx, cy + s * 1.15);
+      g.closePath(); g.fill(); edge(true);
+    },
+    // 여러 도형을 한 덩어리로: 바깥 테두리만 그리고 안쪽 이음새는 안 보이게
+    group(k, build) {
+      const P = new Path2D();
+      build({
+        circ: (x, y, r) => { P.moveTo(x + r, y); P.arc(x, y, r, 0, PI * 2); },
+        ell: (x, y, rx, ry, rot = 0) => { P.moveTo(x + rx * Math.cos(rot), y + rx * Math.sin(rot)); P.ellipse(x, y, rx, ry, rot, 0, PI * 2); },
+        rect: (x, y, w, h) => P.rect(x, y, w, h),
+        poly: pts => { pts.forEach(([x, y], i) => i ? P.lineTo(x, y) : P.moveTo(x, y)); P.closePath(); },
+      });
+      if (ow) { g.lineWidth = ow * 2; g.strokeStyle = COLORS.D; g.lineJoin = 'round'; g.stroke(P); }
+      g.fillStyle = col(k); g.fill(P, 'nonzero');
+    },
+  };
+}
+function processPaint(def) {
+  const S = 4;
+  // 테두리 포함 MAX_C x MAX_R 안에 들어가게 칸 수를 정함
+  const k = Math.min((MAX_C - 2) / def.w, (MAX_R - 2) / def.h);
+  const Cn = Math.round(def.w * k), Rn = Math.round(def.h * k);
+  const cv = document.createElement('canvas');
+  cv.width = Cn * S; cv.height = Rn * S;
+  const g = cv.getContext('2d');
+  g.scale(Cn * S / (def.w * 10), Rn * S / (def.h * 10));
+  const used = new Set();
+  def.draw(makePainter(g, used));
+  const data = g.getImageData(0, 0, cv.width, cv.height).data;
+  const pal = [...used].map(k => [k, hexRgb(COLORS[k])]);
+  const out = [];
+  for (let r = 0; r < Rn; r++) {
+    out.push([]);
+    for (let c = 0; c < Cn; c++) {
+      const i = ((r * S + S / 2) * cv.width + (c * S + S / 2)) * 4;
+      if (data[i + 3] < 128) { out[r].push(null); continue; }
+      let best = null, bd = 1e9;
+      for (const [k, [pr, pg, pb]] of pal) {
+        const d = (data[i] - pr) ** 2 + (data[i + 1] - pg) ** 2 + (data[i + 2] - pb) ** 2;
+        if (d < bd) { bd = d; best = k; }
+      }
+      out[r].push(best);
+    }
+  }
+  // 배경을 지우고 사물만 남김. 고해상도 그림을 같은 모양으로 오려 낼 수 있게 마스크도 저장
+  const stripped = stripBackground(out, STRIP[def.name] || []);
+  const grid = addOutline(addInnerLines(stripped));
+  grid.mask = { cells: stripped.map(r => r.map(v => !!v)), C: Cn, R: Rn };
+  return grid;
+}
+
+// 스테이지 목록: 도트 그림 32개 + 도형 그림 20개
+// 한 가지 색이 너무 넓던 그림을 알록달록한 그림으로 교체 (스테이지 번호-1 : 그림)
+function heartShape(p, cx, cy, s, k) {
+  p.heart(cx, cy, s, k);
+  p.ell(cx - s * 0.52, cy - s * 0.25, s * 0.2, s * 0.13, 'W', -0.6);
+}
+const REPLACE_ARTS = {
+  0: { name:'하트 풍선', w:32, h:30, draw(p) {
+    // 1스테이지라 색을 적게 (하늘·풀·하트 4색)
+    p.bg('L'); p.rect(0,250,320,50,'G');
+    p.ell(50,30,46,16,'W'); p.ell(270,26,50,16,'W'); p.ell(30,215,36,14,'W'); p.ell(290,215,36,14,'W');
+    heartShape(p,85,85,58,'R'); heartShape(p,235,85,58,'K');
+    heartShape(p,160,175,56,'Y');
+  }},
+  2: { name:'과일 바구니', w:32, h:30, draw(p) {
+    p.bg('L');
+    for (let x = 20; x < 320; x += 60) for (let y = 20; y < 200; y += 60) p.circ(x,y,9,'W');
+    p.rect(0,220,320,80,'W',false);
+    for (let y = 220; y < 300; y += 40) for (let x = 0; x < 320; x += 40) if ((x / 40 + (y - 220) / 40) % 2 === 0) p.rect(x,y,40,40,'R',false);
+    p.poly([[45,165],[275,165],[250,285],[70,285]],'N');
+    for (const y of [190,215,240,265]) p.line([[55,y],[265,y]],'S',6);
+    p.circ(250,115,12,'P'); p.circ(268,128,12,'P'); p.circ(240,135,12,'P'); p.circ(258,148,12,'P'); p.circ(275,108,10,'P');
+    p.poly([[40,150],[70,100],[130,90],[100,115],[70,160]],'Y');
+    p.circ(110,150,32,'R'); p.circ(180,130,34,'G'); p.circ(230,160,28,'O');
+    p.line([[110,120],[114,104]],'N',5); p.ell(126,104,12,6,'E',-0.4);
+    p.line([[180,98],[184,82]],'N',5); p.ell(196,82,12,6,'E',-0.4);
+    p.circ(100,140,7,'W'); p.circ(170,118,7,'W');
+  }},
+  3: { name:'열대어', w:32, h:30, draw(p) {
+    p.bg('B');
+    for (const x of [40,120,200,280]) p.poly([[x,0],[x+30,0],[x-20,240],[x-40,240]],'C');
+    p.rect(0,240,320,60,'S');
+    for (const x of [30,70,260,295]) p.curve([[x,300],[x-12,250],[x+10,210],[x-6,170]],'G',12);
+    p.circ(110,262,22,'K'); p.circ(130,246,16,'K'); p.circ(205,258,20,'R'); p.circ(225,270,14,'R');
+    p.group('O', q => { q.ell(160,130,80,52); q.poly([[230,130],[290,85],[300,175]]); });
+    for (const x of [120,170,215]) p.rect(x-9,80,18,104,'W');
+    p.poly([[130,82],[170,48],[200,84]],'Y'); p.poly([[140,176],[175,205],[190,175]],'Y');
+    p.circ(102,118,14,'W'); p.circ(98,118,7,'D');
+    p.ell(70,225,26,14,'Y'); p.poly([[90,225],[110,212],[110,238]],'Y'); p.circ(58,222,4,'D');
+    for (const [x,y,r] of [[50,60,8],[62,35,6],[270,40,8],[285,20,5]]) p.circ(x,y,r,'W');
+  }},
+  7: { name:'줄무늬 고양이', w:32, h:30, draw(p) {
+    p.bg('P'); for (let x = 0; x < 320; x += 40) p.rect(x,0,20,300,'K');
+    p.group('R', q => { q.ell(160,282,150,40); q.rect(10,270,300,30); }); for (const x of [40,120,200,280]) p.circ(x,268,8,'Y');
+    p.group('O', q => { q.poly([[60,120],[80,20],[140,80]]); q.poly([[260,120],[240,20],[180,80]]); q.ell(160,165,118,100); });
+    p.poly([[80,105],[90,48],[122,85]],'K'); p.poly([[240,105],[230,48],[198,85]],'K');
+    for (const x of [130,160,190]) p.rect(x-6,70,12,40,'N');
+    p.rect(42,150,40,10,'N'); p.rect(42,175,34,10,'N'); p.rect(238,150,40,10,'N'); p.rect(244,175,34,10,'N');
+    p.ell(160,205,62,44,'W');
+    p.ell(115,148,20,22,'G'); p.ell(205,148,20,22,'G'); p.ell(115,150,7,16,'D'); p.ell(205,150,7,16,'D');
+    p.poly([[148,188],[172,188],[160,202]],'K');
+    p.arc(148,206,12,0,PI*0.9,'D',4); p.arc(172,206,12,PI*0.1,PI,'D',4);
+  }},
+  8: { name:'사과나무 언덕', w:32, h:30, draw(p) {
+    p.bg('L'); p.circ(275,45,28,'Y');
+    p.ell(60,40,40,12,'W'); p.ell(170,28,36,10,'W');
+    p.ell(160,320,240,90,'G'); p.ell(40,300,110,60,'E');
+    p.curve([[160,300],[150,270],[175,245]],'S',16);
+    p.rect(140,170,40,90,'N');
+    p.group('G', q => { q.circ(160,120,92); q.circ(95,135,48); q.circ(225,135,48); });
+    for (const [x,y,r] of [[120,90,30],[200,150,34],[90,160,24],[230,95,22]]) p.circ(x,y,r,'E');
+    for (const [x,y] of [[110,110],[160,80],[205,115],[140,160],[230,165],[85,145],[180,190]]) { p.circ(x,y,12,'R'); p.circ(x-4,y-4,3,'W'); }
+    for (const [x,k] of [[40,'Y'],[90,'K'],[240,'W'],[285,'P']]) p.circ(x,268,9,k);
+  }},
+  10: { name:'딸기 소풍', w:32, h:30, draw(p) {
+    p.bg('W');
+    for (let y = 0; y < 300; y += 40) for (let x = 0; x < 320; x += 40) if (((x + y) / 40) % 2 === 0) p.rect(x,y,40,40,'K',false);
+    for (let y = 20; y < 300; y += 40) p.rect(0,y-4,320,8,'K');
+    const berry = (x, y, s) => {
+      p.group('R', q => {
+        q.poly([[x - s, y - s * 0.5], [x + s, y - s * 0.5], [x + s * 0.7, y + s * 0.5], [x, y + s * 1.25], [x - s * 0.7, y + s * 0.5]]);
+        q.circ(x - s * 0.5, y - s * 0.5, s * 0.5); q.circ(x + s * 0.5, y - s * 0.5, s * 0.5);
+      });
+      for (const [dx, dy] of [[-0.5,0],[0.5,0],[0,0.5],[0,-0.4],[-0.3,0.85],[0.3,0.85]]) p.rect(x + dx * s - 3, y + dy * s - 3, 7, 7, 'Y');
+      p.poly([[x - s * 0.8, y - s], [x, y - s * 0.6], [x + s * 0.8, y - s], [x + s * 0.3, y - s * 0.5], [x - s * 0.3, y - s * 0.5]], 'G');
+      p.rect(x - 4, y - s * 1.35, 8, s * 0.45, 'E');
+    };
+    berry(95,110,48); berry(225,95,42); berry(170,205,46); berry(60,235,30); berry(275,215,32);
+  }},
+  12: { name:'목도리 펭귄', w:32, h:30, draw(p) {
+    p.bg('L'); p.circ(260,50,24,'Y');
+    p.ell(70,40,40,12,'W');
+    p.rect(0,230,320,70,'B'); p.curve([[0,240],[80,232],[160,244],[240,232],[320,240]],'C',8);
+    p.poly([[20,240],[70,170],[140,175],[200,240]],'W'); p.poly([[180,240],[250,190],[300,240]],'C');
+    p.ell(160,160,70,84,'D');
+    p.ell(160,175,48,66,'W');
+    p.ell(135,120,10,12,'W'); p.ell(185,120,10,12,'W'); p.circ(137,122,5,'D'); p.circ(183,122,5,'D');
+    p.poly([[148,140],[172,140],[160,158]],'O');
+    p.ell(124,148,10,6,'K'); p.ell(196,148,10,6,'K');
+    p.rect(98,172,124,20,'R'); p.rect(180,180,22,52,'R'); for (const x of [110,140,170,200]) p.rect(x,176,8,12,'Y');
+    p.ell(135,246,22,8,'O'); p.ell(185,246,22,8,'O');
+    p.ell(98,180,14,40,'D',0.3); p.ell(222,180,14,40,'D',-0.3);
+  }},
+  24: { name:'바닷속 문어', w:32, h:30, draw(p) {
+    p.bg('B');
+    for (let y = 30; y < 230; y += 50) p.curve([[0,y],[80,y-8],[160,y+6],[240,y-6],[320,y+4]],'C',10);
+    p.rect(0,240,320,60,'S');
+    for (const x of [25,60,265,300]) p.curve([[x,300],[x-10,250],[x+10,205],[x-6,160]],'G',12);
+    p.poly([[230,270],[244,240],[258,270],[288,262],[262,282],[270,300],[244,288],[218,300],[226,282],[200,262]],'O');
+    p.circ(160,105,62,'P');
+    for (const [x,dir] of [[110,-1],[135,-0.4],[160,0],[185,0.4],[210,1]]) p.curve([[x,140],[x+dir*20,185],[x+dir*45,215],[x+dir*30,240]],'P',22);
+    p.ell(138,100,14,17,'W'); p.ell(182,100,14,17,'W'); p.circ(140,104,7,'D'); p.circ(184,104,7,'D');
+    p.ell(120,130,11,7,'K'); p.ell(200,130,11,7,'K');
+    p.arc(160,128,10,PI*0.15,PI*0.85,'D',4);
+    for (const [x,y,r] of [[60,60,9],[75,35,6],[255,50,8],[270,28,5],[240,170,7]]) p.circ(x,y,r,'W');
+  }},
+  28: { name:'잎 위의 무당벌레', w:32, h:30, draw(p) {
+    p.bg('Y');
+    for (const [x,y,k] of [[40,40,'W'],[280,50,'K'],[40,250,'K'],[285,260,'W'],[160,280,'W']]) {
+      for (let a = 0; a < 5; a++) p.circ(x + Math.cos(a * 1.257) * 16, y + Math.sin(a * 1.257) * 16, 11, k);
+      p.circ(x, y, 9, 'O');
+    }
+    p.ell(160,150,140,92,'G',-0.3);
+    p.line([[40,215],[280,85]],'E',8);
+    for (const t of [0.25,0.45,0.65]) { const x = 40 + 240 * t, y = 215 - 130 * t; p.line([[x,y],[x + 30,y + 40]],'E',6); p.line([[x,y],[x - 10,y - 45]],'E',6); }
+    p.ell(170,140,58,50,'R');
+    p.circ(170,92,24,'D');
+    p.rect(166,92,8,96,'D');
+    for (const [x,y,r] of [[140,125,11],[198,122,11],[135,160,10],[205,162,10],[170,178,7]]) p.circ(x,y,r,'D');
+    p.circ(160,86,6,'W'); p.circ(180,86,6,'W');
+  }},
+  29: { name:'선물과 트리', w:32, h:30, draw(p) {
+    p.bg('M');
+    for (const [x,y] of [[30,30],[80,70],[250,40],[290,100],[40,140],[280,180],[60,210]]) p.circ(x,y,5,'W');
+    p.rect(0,255,320,45,'S');
+    p.rect(148,215,24,45,'N');
+    p.group('G', q => { q.poly([[160,30],[230,120],[90,120]]); q.poly([[160,80],[250,180],[70,180]]); q.poly([[160,130],[270,235],[50,235]]); });
+    p.curve([[105,110],[160,130],[215,105]],'W',6); p.curve([[90,170],[160,192],[235,165]],'K',6); p.curve([[75,225],[160,245],[250,222]],'W',6);
+    for (const [x,y,k] of [[130,95,'R'],[185,100,'B'],[120,155,'Y'],[200,150,'R'],[160,165,'B'],[100,210,'Y'],[220,205,'P'],[160,215,'R']]) p.circ(x,y,9,k);
+    p.poly([[160,8],[168,26],[188,28],[172,40],[178,60],[160,48],[142,60],[148,40],[132,28],[152,26]],'Y');
+    p.rect(40,225,60,50,'R'); p.rect(64,225,12,50,'Y'); p.rect(40,244,60,10,'Y');
+    p.rect(230,235,56,40,'B'); p.rect(252,235,12,40,'W'); p.rect(230,250,56,10,'W');
+    p.rect(110,250,40,30,'P'); p.rect(125,250,10,30,'Y');
+  }},
+  30: { name:'보석 왕관', w:32, h:30, draw(p) {
+    p.bg('P');
+    for (const [x,y] of [[30,30],[290,40],[40,150],[285,140],[160,20],[90,60],[230,70]]) p.poly([[x,y-12],[x+4,y-4],[x+12,y],[x+4,y+4],[x,y+12],[x-4,y+4],[x-12,y],[x-4,y-4]],'Y');
+    p.group('R', q => { q.ell(160,250,150,46); q.rect(10,230,300,40); });
+    for (const x of [20,300]) { p.circ(x,262,12,'Y'); p.rect(x-5,262,10,30,'Y'); }
+    p.poly([[60,215],[60,90],[105,140],[160,70],[215,140],[260,90],[260,215]],'Y');
+    p.rect(60,180,200,35,'O');
+    for (const [x,y] of [[60,86],[160,64],[260,86]]) p.circ(x,y,14,'W');
+    for (const [x,k] of [[95,'B'],[160,'R'],[225,'G']]) p.circ(x,197,14,k);
+    for (const [x,y,k] of [[105,155,'G'],[160,130,'B'],[215,155,'K']]) p.circ(x,y,12,k);
+  }},
+};
+const STAGES = [
+  ...PIXEL_ARTS.map(([name, art]) => ({ name, src: { type: 'pixel', art } })),
+  ...PAINT_ARTS.map(def => ({ name: def.name, src: { type: 'paint', def } })),
+];
+for (const [i, def] of Object.entries(REPLACE_ARTS)) STAGES[i] = { name: def.name, src: { type: 'paint', def } };
+// ---- 밸런스 테이블 읽기 (balance/balance.js). 파일이 없으면 아래 기본값으로 예전처럼 동작 ----
+const BAL = window.BALANCE || {
+  curve: { noLinkUntil: 3, link: { base: 0.18, perStage: 0.008, max: 0.5 }, jitter: { base: 0.05, perStage: 0.008, max: 0.35 }, ants: { base: 14, perStage: 0.35, max: 30 } },
+  tiers: { normal: { label: '보통', color: '#f3e3c3', slots: 5, linkAdd: 0, jitterAdd: 0, jitterSpan: 1, antMul: 1 } },
+  pattern: [{ when: 'true', tier: 'normal' }], stages: {},
+  boosters: {}, boosterOrder: [], startInventory: {}, maxPerBooster: 9, rewards: {},
+  hiddenItems: { solo: { count: 3, perStage: 1 / 8, max: 9 }, coop: { count: 3, perStage: 1 / 8, max: 9 }, versus: { count: 3, perStage: 1 / 8, max: 9 } },
+};
+const curveAt = (cv, i) => Math.min(cv.max, cv.base + cv.perStage * i);
+const PATTERN = (BAL.pattern || []).map(p => ({ tier: p.tier, test: new Function('n', `return (${p.when});`) }));
+const GRULES = (BAL.gimmickRules || []).map(p => ({ set: p.set, test: new Function('n', `return (${p.when});`) }));
+function stageGimmicks(n, tier, row) {   // 등급 기본값 + 맞는 규칙 전부 + 스테이지 표
+  const out = { ...(tier.gimmicks || {}) };
+  for (const r of GRULES) if (r.test(n)) Object.assign(out, r.set);
+  return Object.assign(out, row.gimmicks || {});
+}
+// 스테이지 i(0부터)의 최종 밸런스 값 = 곡선 + 등급 가감 + 스테이지 표 덮어쓰기
+function stageBalance(i) {
+  const n = i + 1, row = (BAL.stages && BAL.stages[n]) || {};
+  const tierKey = row.tier || (PATTERN.find(p => p.test(n)) || { tier: 'normal' }).tier;
+  const tier = BAL.tiers[tierKey] || BAL.tiers.normal;
+  const cv = BAL.curve;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const link = i < cv.noLinkUntil ? 0 : clamp(curveAt(cv.link, i) + (tier.linkAdd || 0), 0, 0.9);
+  return {
+    tier: tierKey,
+    slots: row.slots || tier.slots || 5,
+    link: row.link != null ? row.link : link,
+    jitter: row.jitter != null ? row.jitter : clamp(curveAt(cv.jitter, i) + (tier.jitterAdd || 0), 0, 0.9),
+    jitterSpan: row.jitterSpan || tier.jitterSpan || 1,
+    targetAnts: row.ants || Math.round(Math.floor(curveAt(cv.ants, i)) * (tier.antMul || 1)),
+    seed: row.seed || 0,
+    reward: row.reward || null,
+    gimmicks: stageGimmicks(n, tier, row),
+  };
+}
+function applyStageBalance(i) { Object.assign(STAGES[i], stageBalance(i)); }
+STAGES.forEach((st, i) => applyStageBalance(i));
+const tierOf = i => (STAGES[i] && BAL.tiers[STAGES[i].tier]) || null;
+// 스테이지 시드 (기본 스테이지는 밸런스 표의 seed, 내 사진은 할 때마다 무작위)
+const SEED_FIX = {};
+function stageGrid(i) {
+  const st = STAGES[i];
+  if (!st.grid) st.grid = st.src.type === 'pixel' ? processPixel(st.src.art) : processPaint(st.src.def);
+  return st.grid;
+}
+const BASE_COUNT = STAGES.length;   // 기본 스테이지 수 (내 사진 스테이지는 그 뒤에 붙음)
+
+// ================== 내 사진으로 도트 그림 만들기 ==================
+const PHOTO_COLORS = 12;  // 사진에서 고를 음식 색 수 (최대)
+function photoToGrid(img) {
+  const asp = img.width / img.height;
+  let Cn = MAX_C - 2, Rn = Math.round(Cn / asp);
+  if (Rn > MAX_R - 2) { Rn = MAX_R - 2; Cn = Math.max(4, Math.round(Rn * asp)); }
+  Rn = Math.max(4, Rn);
+  const cv = document.createElement('canvas');
+  cv.width = Cn; cv.height = Rn;
+  const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(img, 0, 0, Cn, Rn);           // 칸마다 평균 색
+  const data = g.getImageData(0, 0, Cn, Rn).data;
+  const keys = Object.keys(COLORS);
+  const pal = keys.map(k => [k, hexRgb(COLORS[k])]);
+  const nearest = (r, gg, b, list) => {
+    let best = list[0][0], bd = 1e9;
+    for (const [k, [pr, pg, pb]] of list) {
+      const d = 2 * (r - pr) ** 2 + 4 * (gg - pg) ** 2 + 3 * (b - pb) ** 2;   // 사람 눈에 가까운 가중치
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  };
+  // 귀여운 느낌을 위해 채도를 살짝 올려서 팔레트에 맞춤
+  const px = [];
+  for (let i = 0; i < data.length; i += 4) {
+    let [r, gg, b] = [data[i], data[i + 1], data[i + 2]];
+    const m = (r + gg + b) / 3;
+    r = Math.max(0, Math.min(255, m + (r - m) * 1.35));
+    gg = Math.max(0, Math.min(255, m + (gg - m) * 1.35));
+    b = Math.max(0, Math.min(255, m + (b - m) * 1.35));
+    px.push([r, gg, b, data[i + 3]]);
+  }
+  const first = px.map(([r, gg, b]) => nearest(r, gg, b, pal));
+  const cnt = {};
+  first.forEach(k => cnt[k] = (cnt[k] || 0) + 1);
+  // 넓이가 1% 이상인 색은 작아도 살림 (지붕의 빨강처럼 눈에 띄는 색)
+  const minCells = Math.max(6, first.length * 0.008);
+  const keep = Object.entries(cnt).sort((a, b) => b[1] - a[1]).filter(([, n], i) => i < 4 || n >= minCells).slice(0, PHOTO_COLORS).map(([k]) => k);
+  const palKeep = pal.filter(([k]) => keep.includes(k));
+  const out = [];
+  for (let r = 0; r < Rn; r++) {
+    out.push([]);
+    for (let c = 0; c < Cn; c++) {
+      const [pr, pg, pb, a] = px[r * Cn + c];
+      out[r].push(a < 128 ? null : nearest(pr, pg, pb, palKeep));
+    }
+  }
+  // 사진도 배경(하늘·벽 등 가장자리의 넓은 색)을 지우고 사물만 남김. 사진은 그라데이션이 많아서 안쪽 선 없이
+  const stripped = stripBackground(out);
+  const grid = addOutline(stripped);
+  grid.mask = { cells: stripped.map(r => r.map(v => !!v)), C: Cn, R: Rn };
+  return grid;
+}
+function makePhotoStage(img) {
+  const idx = BASE_COUNT;
+  STAGES[idx] = {
+    name: '내 사진', src: { type: 'photo', img }, grid: photoToGrid(img),
+    tier: 'normal', slots: 5, link: 0.3, jitter: 0.15, jitterSpan: 1, targetAnts: 24, seed: 0, reward: null, gimmicks: {}
+  };
+  SEED_FIX[idx] = Math.floor(Math.random() * 100000);   // 할 때마다 다른 쇠똥구리 순서
+  hiresCache.clear();
+  return idx;
+}
+const photoInput = document.getElementById('photo');
+let photoWanted = false;
+function pickPhoto() { photoWanted = true; }   // 실제 파일 창은 click 이벤트에서 염 (모바일 제한 때문)
+photoInput.addEventListener('change', () => {
+  const f = photoInput.files && photoInput.files[0];
+  photoInput.value = '';
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    // 너무 큰 사진은 줄여서 보관
+    const s = Math.min(1, 900 / Math.max(img.width, img.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    URL.revokeObjectURL(url);
+    startStage(makePhotoStage(cv));
+    toast('내 사진이 도트 음식이 됐어요!');
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('이 사진은 열 수 없어요'); };
+  img.src = url;
+});
+
+// ================== 규칙: 바깥과 이어진 빈 길로 닿는 음식만 가져갈 수 있음 (꺾어서 이동 가능) ==================
+function borderSide(r, c, R, C) {
+  if (r === 0) return 'T';
+  if (r === R - 1) return 'B';
+  if (c === 0) return 'L';
+  return 'R';
+}
+// 그림판 가장자리와 이어진 빈칸을 넓이 우선으로 탐색해서
+// 각 음식 칸마다 "어디로 들어와서 몇 칸 걸어 오는지" 후보를 만든다
+function reachMap(g) {
+  const R = g.length, C = g[0].length, N = R * C;
+  const dist = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), root = new Int32Array(N).fill(-1);
+  const q = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (g[r][c] || !(r === 0 || c === 0 || r === R - 1 || c === C - 1)) continue;
+    const k = r * C + c; dist[k] = 0; root[k] = k; q.push(k);
+  }
+  for (let i = 0; i < q.length; i++) {
+    const k = q[i], r = Math.floor(k / C), c = k % C;
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) continue;
+      dist[n] = dist[k] + 1; par[n] = k; root[n] = root[k]; q.push(n);
+    }
+  }
+  const acc = new Map();
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!g[r][c]) continue;
+    const cands = [];
+    if (r === 0) cands.push({ via: -1, side: 'T', steps: 0 });
+    if (r === R - 1) cands.push({ via: -1, side: 'B', steps: 0 });
+    if (c === 0) cands.push({ via: -1, side: 'L', steps: 0 });
+    if (c === C - 1) cands.push({ via: -1, side: 'R', steps: 0 });
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) cands.push({ via: n, steps: dist[n] + 1 });
+    }
+    if (cands.length) acc.set(r * C + c, cands);
+  }
+  return { acc, dist, par, root, R, C };
+}
+
+function buildStage(idx) {
+  const st = STAGES[idx], seedNum = idx * 7919 + 101 + (SEED_FIX[idx] || st.seed || 0) * 1000003;
+  const grid = stageGrid(idx).map(r => r.slice());
+  const R = grid.length, C = grid[0].length;
+  const gm = st.gimmicks || {};
+  const maxSlots = st.slots || 5, span = st.jitterSpan || 1;
+  // 자물쇠 목록 (그림 속 🔑을 먹을 때마다 앞에서부터 하나씩 열림): 잠긴 일터 칸들 → 잠긴 대기열 줄
+  const lockSlots = Math.min(maxSlots - 2, gm.lockSlots || 0), lockCol = gm.lockCols ? 2 : -1;
+  const locks = [];
+  for (let s = maxSlots - lockSlots; s < maxSlots; s++) locks.push({ type: 'slot', slot: s });
+  if (lockCol >= 0) locks.push({ type: 'col', col: lockCol });
+  const foodCells = [];
+  grid.forEach((row, r) => row.forEach((v, c) => { if (v) foodCells.push(r * C + c); }));
+  const nb = k => { const r = Math.floor(k / C), c = k % C, out = []; for (const [dr, dc] of D4) { const nr = r + dr, nc = c + dc; if (nr >= 0 && nc >= 0 && nr < R && nc < C) out.push(nr * C + nc); } return out; };
+
+  // 실제 플레이를 흉내 내며 쇠똥구리 순서를 만든다:
+  //  일하는 칸은 보통 min(3, 열린 칸-1)개, 막히면 열린 칸 수까지. 새 쇠똥구리는 "지금 닿을 수 있는 색"으로만.
+  //  🧊 얼음 음식은 옆 음식이 먹혀야 녹아서 가져갈 수 있음. 🔑 열쇠 음식을 먹으면 자물쇠가 하나 열림.
+  function run(ice, keys) {
+    const rng = mulberry32(seedNum);
+    const g = grid.map(r => r.slice()), frozen = new Set(ice);
+    const remain = {};
+    let total = 0;
+    g.forEach(r => r.forEach(v => { if (v) { remain[v] = (remain[v] || 0) + 1; total++; } }));
+    const avg = Math.max(4, total / st.targetAnts);
+    const seq = [], active = [], removed = [], keyAt = [];
+    let open = maxSlots - lockSlots, opened = 0;
+    const geo = geometry(R, C);
+    const homes = [0, 1, 2, 3, 4].map(homePos);
+    let info = null;
+    const nearest = (list, slot) => {   // 실제 쇠똥구리처럼 집에서 가장 가까운 음식
+      let bi = 0, bd = 1e9;
+      for (let i = 0; i < list.length; i++) {
+        for (const cand of info.acc.get(list[i])) {
+          const d = pathCost(geo, info, homes[slot].x, homes[slot].y, list[i], cand);
+          if (d < bd) { bd = d; bi = i; }
+        }
+      }
+      return bi;
+    };
+    const reachable = () => {
+      info = reachMap(g);
+      const by = {};
+      for (const k of info.acc.keys()) { if (frozen.has(k)) continue; const v = g[Math.floor(k / C)][k % C]; (by[v] = by[v] || []).push(k); }
+      return by;
+    };
+    const freeSlot = () => [0, 1, 2, 3, 4].slice(0, open).find(s => !active.some(x => x.slot === s));
+    const addAnt = by => {
+      if (active.length >= open) return false;
+      const colors = Object.keys(by).filter(col => !active.some(x => x.a.color === col));
+      if (!colors.length) return false;
+      let sum = 0; colors.forEach(col => sum += by[col].length);
+      let pick = rng() * sum, color = colors[0];
+      for (const col of colors) { pick -= by[col].length; if (pick <= 0) { color = col; break; } }
+      let size = Math.round(avg * (0.6 + rng() * 0.8));
+      size = Math.min(size, Math.max(6, Math.round(by[color].length * 2.5)), remain[color]);
+      if (remain[color] - size < 3) size = remain[color];
+      const a = { color, total: size, group: null };
+      remain[color] -= size;
+      seq.push(a); active.push({ a, left: size, slot: freeSlot() });
+      return true;
+    };
+    for (let guard = 0; total > 0; guard++) {
+      if (guard > 20000) return { ok: false };
+      let by = reachable();
+      while (active.length < Math.min(3, open - 1) && addAnt(by)) {}
+      let progress = false;
+      for (const act of active.slice()) {
+        const list = by[act.a.color];
+        if (!list || !list.length) continue;
+        const k = list.splice(nearest(list, act.slot), 1)[0];
+        g[Math.floor(k / C)][k % C] = null; total--; act.left--; progress = true;
+        removed.push(k);
+        for (const n of nb(k)) frozen.delete(n);   // 🧊 옆 음식이 먹히면 녹음
+        const ki = keys.indexOf(k);
+        if (ki >= 0) {   // 🔑 열쇠: 다음 자물쇠를 엶
+          keyAt[ki] = seq.length;
+          const L = locks[opened++];
+          if (L && L.type === 'slot') open++;
+        }
+        if (act.left === 0) active.splice(active.indexOf(act), 1);
+      }
+      if (!progress) {
+        by = reachable();
+        if (active.length >= open || !addAnt(by)) {
+          if (!active.length) return { ok: false };   // 얼음 때문에 아무것도 못 먹음 → 얼음 배치 실패
+          const act = active.shift();
+          act.a.total -= act.left; remain[act.a.color] += act.left;
+          if (act.a.total <= 0) seq.splice(seq.indexOf(act.a), 1);
+        }
+      }
+    }
+    return { ok: true, seq, removed, keyAt, rng };
+  }
+
+  // 🧊 얼음 배치 (실패하면 개수를 줄여 다시)
+  const grng = mulberry32(seedNum ^ 0x5eed);
+  let ice = [];
+  const iceN = Math.round((gm.ice || 0) * foodCells.length);
+  if (iceN) {
+    const pool = shuffle(foodCells.slice(), grng);
+    const set = new Set();
+    for (const k of pool) {
+      if (set.size >= iceN) break;
+      // 옆에 얼음이 아닌 음식이 하나는 있어야 녹을 수 있음
+      if (nb(k).some(n => grid[Math.floor(n / C)][n % C] && !set.has(n))) set.add(k);
+    }
+    ice = [...set];
+  }
+  // 1차: 열쇠 없이 돌려서 음식이 먹히는 순서를 얻고, 진행도 keyAt 지점의 음식에 🔑, gift 지점에 🎁을 숨김
+  let base = run(ice, []);
+  for (let t = 0; !base.ok && t < 4; t++) { ice = ice.slice(0, Math.floor(ice.length / 2)); base = run(ice, []); }
+  if (!base.ok) { ice = []; base = run(ice, []); }
+  const used = new Set(ice);
+  const pickAt = f => {
+    const o = base.removed;
+    for (let i = Math.floor(f * o.length); i < o.length; i++) if (!used.has(o[i])) { used.add(o[i]); return o[i]; }
+    return -1;
+  };
+  const keyFr = gm.keyAt || [0.25, 0.45, 0.6];
+  const keys = locks.map((L, i) => pickAt(keyFr[Math.min(i, keyFr.length - 1)])).filter(k => k >= 0);
+  const gifts = [];
+  for (const f of gm.giftAt || []) { const k = pickAt(f); if (k >= 0) gifts.push(k); }
+  // 2차: 열쇠를 먹으면 자물쇠가 열리는 것까지 흉내 낸 진짜 순서
+  let res = keys.length ? run(ice, keys) : base;
+  if (!res.ok) res = base;
+  const { seq, rng } = res;
+  for (let i = 0; i < seq.length - 1; i++) {
+    // 순서 뒤섞기: 허들 스테이지는 더 멀리(span칸까지) 바꿔서 "지금 못 먹는 색"이 앞에 나옴
+    if (rng() < st.jitter) { const j = Math.min(seq.length - 1, i + 1 + Math.floor(rng() * span)); [seq[i], seq[j]] = [seq[j], seq[i]]; i++; }
+  }
+  // 대기열 3줄에 나눔. ⛓ 잠긴 줄은 그 줄을 여는 열쇠를 먹은 뒤에 나올 쇠똥구리만 받음
+  const colKey = locks.findIndex(L => L.type === 'col');
+  const colOpenAt = colKey >= 0 ? (res.keyAt[colKey] != null ? res.keyAt[colKey] : seq.length) : 0;
+  const cols = [[], [], []];
+  const chunkOf = new Map();
+  let i = 0, chunkId = 0;
+  while (i < seq.length) {
+    const lockedNow = i < colOpenAt;
+    const open3 = lockedNow ? [0, 1, 2].filter(c => c !== lockCol) : [0, 1, 2];
+    const chunk = seq.slice(i, i + open3.length);
+    const perm = shuffle(open3.slice(), rng);
+    chunk.forEach((a, k) => { cols[perm[k]].push(a); chunkOf.set(a, chunkId); });
+    i += chunk.length; chunkId++;
+  }
+  // 사슬: 같은 묶음(같은 때 고르는)의 같은 줄 이웃 두 마리만 연결 (교착 없음), 잠긴 줄은 사슬 없음
+  const nRows = Math.max(...cols.map(c => c.length));
+  for (let r = 1; r < nRows; r++) {
+    if (rng() >= st.link) continue;
+    const opts = [[0, 1], [1, 2]].filter(p => p.every(c => cols[c][r] && c !== lockCol) && chunkOf.get(cols[p[0]][r]) === chunkOf.get(cols[p[1]][r]));
+    if (!opts.length) continue;
+    const pick = opts[Math.floor(rng() * opts.length)];
+    const grp = { members: pick.map(c => cols[c][r]) };
+    grp.members.forEach(a => a.group = grp);
+  }
+  return { grid, cols, ice, keys, gifts, locks: locks.slice(0, keys.length) };
+}
+
+// ================== 레이아웃 ==================
+// 화면 배치: 위 2/3는 그림, 아래 1/3은 일터 + 대기열(3줄)
+const PIC = { x: 16, y: 74, w: 388, h: 420 };
+const GROUND_Y = 532;   // 풀밭과 흙의 경계
+const HOLE = { x: 210, y: 512 };           // 돌아오는 굴은 가운데
+const SLOT = { y: 548, h: 62, w: 72, gap: 6, x0: 18 };
+const Q = { y: 620, rowH: 52, colW: 112, gap: 15 };
+const CARD_PX = 2.6;   // 일터·대기열 쇠똥구리 크기
+Q.x0 = (W - (3 * Q.colW + 2 * Q.gap)) / 2;
+const SPEED = 80;           // 1배속 쇠똥구리 속도 (음식을 굴리는 모습이 보이게 천천히)
+const SPEEDS = [1, 2, 3, 5, 9]; // 배속 버튼을 누를 때마다 바뀌는 순서
+const beetlePx = () => Math.max(0.9, game.cs * 1.82 / 15);   // 움직이는 쇠똥구리 = 음식 한 칸의 약 1.8배 (이전보다 1.3배 크게)
+const ballR = () => game.cs * 0.5;                            // 굴리는 음식 = 그림 속 음식 한 칸
+const DISPATCH_GAP = 0.4;   // 쇠똥구리 출발 간격(초)
+const TRACK_M = -3;         // 쇠똥구리 길: 그림판 가장자리에서 안쪽으로 3px
+const HOLE_DETOUR = 46;     // 가운데 집의 쇠똥구리는 굴을 비켜서 올라감
+const colX = c => Q.x0 + c * (Q.colW + Q.gap) + Q.colW / 2;
+const qPosY = i => Q.y + 10 + i * Q.rowH + Q.rowH / 2;
+const slotCenter = k => ({ x: SLOT.x0 + k * (SLOT.w + SLOT.gap) + SLOT.w / 2, y: SLOT.y + SLOT.h / 2 });
+const homePos = k => ({ x: slotCenter(k).x, y: SLOT.y - 12 });
+const PCOL = ['#4a82e8', '#ef4f5a'];   // 1P 파랑, 2P 빨강
+
+// ================== 도트 스프라이트 ==================
+// o 테두리, b 몸, h 밝은 곳, s 어두운 곳, e 흰자, p 눈동자, k 볼터치
+const SPR = {
+  // 쇠똥구리 옆모습 (오른쪽을 봄): 걸어가기 2프레임
+  beetleWalk0: [
+    '....oooooo.....',
+    '..oobbbohhboo..',
+    '.obbbbbobhhbbo.',
+    'obbbbbbobboboo.',
+    'obbbbbbobbboebo',
+    '.obbbbbobbobbbo',
+    '..ooooooooooooo',
+    '..o.o..o.o..o..',
+    '.o..o.o..o.o...'],
+  beetleWalk1: [
+    '....oooooo.....',
+    '..oobbbohhboo..',
+    '.obbbbbobhhbbo.',
+    'obbbbbbobboboo.',
+    'obbbbbbobbboebo',
+    '.obbbbbobbobbbo',
+    '..ooooooooooooo',
+    '...o.o..o.o.o..',
+    '..o..o.o..o..o.'],
+  // 물구나무 서서 뒷다리로 공(오른쪽)을 미는 모습 2프레임
+  beetlePush0: [
+    '........o.o..',
+    '.......o.o.oo',
+    '......ooooo..',
+    '.....obbbbbo.',
+    '....obhbbbbo.',
+    '...obhhbbbbo.',
+    '...obhbbbbbo.',
+    '..obhbbbbbo..',
+    '..ooooooooo..',
+    '.obbbbbbbo...',
+    '.obeboooo....',
+    'obbboo.o.o...',
+    'ooooo.o...o..',
+    '......o....o.'],
+  beetlePush1: [
+    '........o.o..',
+    '.......o.o.oo',
+    '......ooooo..',
+    '.....obbbbbo.',
+    '....obhbbbbo.',
+    '...obhhbbbbo.',
+    '...obhbbbbbo.',
+    '..obhbbbbbo..',
+    '..ooooooooo..',
+    '.obbbbbbbo...',
+    '.obeboooo....',
+    'obbboo.o.o...',
+    'ooooo..o.o...',
+    '.....o.....o.'],
+  // 위에서 본 쇠똥구리 (위를 봄): 톱니 머리 방패, 둥근 날개딱지, 가시 다리
+  beetle0: [
+    '..o.o.o.o.o..',
+    '..ooooooooo..',
+    'o.obbbbbbbo.o',
+    '.ooebbbbbeoo.',
+    '..ooooooooo..',
+    'o.obhbbbbso.o',
+    '.oobhbbbbsoo.',
+    '..ooooooooo..',
+    '.oobhbobbsoo.',
+    'oobhbbobbbsoo',
+    '.obhbbobbbso.',
+    '.obhbbobbbso.',
+    'oobbbbobbbsoo',
+    '..obbbobbbo..',
+    '...ooooooo...'],
+  beetle1: [
+    '..o.o.o.o.o..',
+    '..ooooooooo..',
+    '.oobbbbbbboo.',
+    'oooebbbbbeooo',
+    '..ooooooooo..',
+    '.oobhbbbbsoo.',
+    'o.obhbbbbso.o',
+    '..ooooooooo..',
+    '.oobhbobbsoo.',
+    '.obhbbobbbso.',
+    'oobhbbobbbsoo',
+    '.obhbbobbbso.',
+    '.obbbbobbbso.',
+    'o.obbbobbbo.o',
+    '...ooooooo...'],
+};
+// 도트 음식 구슬 (16x16: 음식이 커져도 도트 하나는 작아서 부드럽게 보임)
+// o 가장자리, b 몸, h 밝은 쪽, s 그늘, w 반짝이
+const BEAD_N = 16;
+const BEAD = (() => {
+  const rows = [];
+  for (let y = 0; y < BEAD_N; y++) {
+    let row = '';
+    for (let x = 0; x < BEAD_N; x++) {
+      const px = (x + 0.5) / BEAD_N - 0.5, py = (y + 0.5) / BEAD_N - 0.5, d = Math.hypot(px, py);
+      if (d > 0.49) row += '.';
+      else if (d > 0.43) row += 'o';
+      else if (Math.hypot(px + 0.17, py + 0.19) < 0.08) row += 'w';
+      else {
+        const v = -(px + py) / 0.6;              // 왼쪽 위가 밝고 오른쪽 아래가 어두움
+        row += v > 0.42 ? 'h' : v < -0.42 ? 's' : 'b';
+      }
+    }
+    rows.push(row);
+  }
+  return rows;
+})();
+const beadCache = new Map();
+const spriteCache = new Map();
+function spriteColor(ch, color, name) {
+  const b = COLORS[color], dark = color === 'D';
+  if (name === 'beetle') {   // 쇠똥구리: 몸 전체가 맡은 음식 색 (검은 음식이면 윤기 나는 검정)
+    switch (ch) {
+      case 'o': return '#000000';
+      case 'b': return dark ? '#211d28' : b;
+      case 'h': return dark ? '#5a5668' : shade(b, 0.45);
+      case 's': return dark ? '#15121a' : shade(b, -0.3);
+      case 'e': return '#ffffff';
+    }
+  }
+  switch (ch) {
+    case 'o': return dark ? '#000000' : OUTLINE;
+    case 'b': return b;
+    case 'h': return dark ? '#3e3a4c' : shade(b, 0.45);
+    case 's': return shade(b, -0.3);
+    case 'e': return '#ffffff';
+    case 'p': return dark ? '#000000' : OUTLINE;
+    case 'k': return '#ff8fb0';
+  }
+  return null;
+}
+function getSprite(name, color, dir, px, flip = false) {
+  const key = name + '|' + color + '|' + dir + '|' + px + '|' + flip;
+  let cv = spriteCache.get(key);
+  if (cv) return cv;
+  const map = SPR[name], h = map.length, w = map[0].length;
+  const ow = dir % 2 ? h : w, oh = dir % 2 ? w : h;
+  const P = Math.max(1, Math.round(px * RES));
+  cv = document.createElement('canvas');
+  cv.width = ow * P; cv.height = oh * P;
+  const c2 = cv.getContext('2d');
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
+    const ch = map[r][c];
+    if (ch === '.') continue;
+    let x, y;
+    if (dir === 0) { x = c; y = r; }
+    else if (dir === 1) { x = h - 1 - r; y = c; }
+    else if (dir === 2) { x = w - 1 - c; y = h - 1 - r; }
+    else { x = r; y = w - 1 - c; }
+    if (flip) x = ow - 1 - x;
+    c2.fillStyle = spriteColor(ch, color, name.startsWith('beetle') ? 'beetle' : name);
+    c2.fillRect(x * P, y * P, P, P);
+  }
+  cv.lw = ow * px; cv.lh = oh * px;
+  spriteCache.set(key, cv);
+  return cv;
+}
+function drawSprite(name, color, dir, px, cx, cy, alpha = 1, flip = false) {
+  const cv = getSprite(name, color, dir, px, flip);
+  if (alpha < 1) ctx.globalAlpha = alpha;
+  ctx.drawImage(cv, Math.round(cx - cv.lw / 2), Math.round(cy - cv.lh / 2), cv.lw, cv.lh);
+  ctx.globalAlpha = 1;
+}
+
+// 도트 음식 구슬: rot(0~3)만큼 90도씩 돌려 그리면 굴러가는 것처럼 보임
+// 구슬 한 개를 실제 화면 픽셀 크기로 미리 그려 둠 (색·회전·크기별로 저장해서 빠르게 재사용)
+function beadCanvas(ch, rot, dev) {
+  const key = ch + '|' + rot + '|' + dev;
+  let cv = beadCache.get(key);
+  if (cv) return cv;
+  const col = COLORS[ch], dark = ch === 'D';
+  const pal = {
+    // 음영은 은은하게 (음식이 커져도 테두리·그늘이 도드라지지 않게)
+    o: dark ? '#1a1722' : shade(col, -0.2),
+    b: col,
+    h: dark ? '#3a3646' : shade(col, 0.2),
+    w: dark ? '#5e5a6c' : shade(col, 0.5),
+    s: dark ? '#221e2a' : shade(col, -0.08),
+  };
+  cv = document.createElement('canvas');
+  cv.width = cv.height = Math.max(1, dev);
+  const g = cv.getContext('2d');
+  // 화면 픽셀 하나하나마다 정확한 원으로 계산 → 어떤 크기든 좌우·위아래가 똑같은 둥근 모양
+  for (let y = 0; y < dev; y++) for (let x = 0; x < dev; x++) {
+    let px = (x + 0.5) / dev - 0.5, py = (y + 0.5) / dev - 0.5;
+    if (rot === 1) [px, py] = [py, -px]; else if (rot === 2) [px, py] = [-px, -py]; else if (rot === 3) [px, py] = [-py, px];
+    const d = Math.hypot(px, py);
+    let k;
+    if (d > 0.48) continue;
+    else if (d > 0.41) k = 'o';
+    else if (Math.hypot(px + 0.16, py + 0.18) < 0.09) k = 'w';
+    else { const v = -(px + py) / 0.58; k = v > 0.42 ? 'h' : v < -0.42 ? 's' : 'b'; }
+    g.fillStyle = pal[k];
+    g.fillRect(x, y, 1, 1);
+  }
+  beadCache.set(key, cv);
+  return cv;
+}
+// size는 그리는 쪽 좌표 기준. 실제 화면 픽셀 크기에 맞춰 구슬을 만들어 그려서 또렷하게
+function paintBead(c2, x, y, size, ch, rot = 0) {
+  const scale = c2.getTransform ? c2.getTransform().a : 1;
+  c2.drawImage(beadCanvas(ch, rot, Math.round(size * scale)), x, y, size, size);
+}
+// 굴러가는 음식 구슬 (굴러간 각도만큼 90도씩 돌아감)
+function drawFoodBall(x, y, r, ch, turn) {
+  const rot = ((Math.floor(turn / (PI / 2)) % 4) + 4) % 4;
+  paintBead(ctx, Math.round(x - r), Math.round(y - r), Math.round(r * 2), ch, rot);
+}
+// 그림 속 네모 음식 한 칸: 8x8 도트 무늬 (도트 계단과 알갱이가 보이는 픽셀 느낌)
+// h 위·왼쪽 빛, w 반짝이, b 몸, s 아래·오른쪽 그늘, O 모서리, d 어두운 알갱이, l 밝은 알갱이
+// 알갱이 위치가 다른 무늬 3가지를 섞어서 찍어 낸 듯한 느낌을 줄임
+// 3D 상자 모양: 테두리 1도트를 빗면으로 (위 T 가장 밝게, 왼쪽 L, 오른쪽 R, 아래 B 가장 어둡게, 모서리는 대각선으로 나눔)
+// 윗면은 왼쪽 위 → 오른쪽 아래로 3단계(1·2·3) 자연스러운 그늘, 작은 반짝이 w, 알갱이 d 하나
+function makeBoxPattern(speck) {
+  const N = 8, rows = [];
+  for (let y = 0; y < N; y++) {
+    let row = '';
+    for (let x = 0; x < N; x++) {
+      const top = y === 0, bot = y === N - 1, left = x === 0, right = x === N - 1;
+      if (top && right) row += x - y > N - 1 - x ? 'T' : 'R';
+      else if (bot && left) row += 'L';
+      else if (top) row += 'T';
+      else if (bot) row += 'B';
+      else if (left) row += 'L';
+      else if (right) row += 'R';
+      else if ((x === 1 || x === 2) && y === 1 || x === 1 && y === 2) row += 'w';
+      else if (x === speck[0] && y === speck[1]) row += 'd';
+      else { const t = (x + y - 2) / 10; row += t < 0.34 ? '1' : t < 0.67 ? '2' : '3'; }
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+const SQUARES = [makeBoxPattern([5, 4]), makeBoxPattern([3, 5]), makeBoxPattern([5, 2])];
+const squareCache = new Map();
+function paintSquare(c2, x, y, w, h, ch, variant = 0) {
+  const scale = c2.getTransform ? c2.getTransform().a : 1;
+  const dw = Math.max(1, Math.round(w * scale)), dh = Math.max(1, Math.round(h * scale));
+  const key = ch + '|' + dw + '|' + dh + '|' + variant;
+  let cv = squareCache.get(key);
+  if (!cv) {
+    const col = COLORS[ch], dark = ch === 'D';
+    const SQUARE = SQUARES[variant % SQUARES.length];
+    // 이전(은은)과 강한 버전의 중간 세기
+    const pal = dark ? {
+      T: '#46424f', L: '#36323f', R: '#17141d', B: '#0e0c12',
+      w: '#5a5668', d: '#1c1924', 1: '#2e2a37', 2: '#26222e', 3: '#211d29',
+    } : {
+      T: shade(col, 0.22), L: shade(col, 0.12), R: shade(col, -0.12), B: shade(col, -0.22),
+      w: shade(col, 0.42), d: shade(col, -0.08),
+      1: shade(col, 0.05), 2: col, 3: shade(col, -0.05),
+    };
+    cv = document.createElement('canvas');
+    cv.width = dw; cv.height = dh;
+    const g = cv.getContext('2d');
+    const N = 8;
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const x0 = Math.round(c * dw / N), y0 = Math.round(r * dh / N);
+      const x1 = Math.round((c + 1) * dw / N), y1 = Math.round((r + 1) * dh / N);
+      if (x1 <= x0 || y1 <= y0) continue;
+      g.fillStyle = pal[SQUARE[r][c]];
+      g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    }
+    squareCache.set(key, cv);
+  }
+  c2.drawImage(cv, x, y, w, h);
+}
+// 도트 상자 블록 (클리어 그림의 도트 그림용)
+function paintBlock(c2, x, y, w, h, ch) {
+  const col = COLORS[ch];
+  const u = Math.max(1, Math.round(Math.min(w, h) / 6));
+  c2.fillStyle = shade(col, -0.38); c2.fillRect(x, y, w, h);
+  c2.fillStyle = shade(col, 0.4); c2.fillRect(x, y, w - u, h - u);
+  c2.fillStyle = col; c2.fillRect(x + u, y + u, w - 2 * u, h - 2 * u);
+}
+
+// ================== 캐시 레이어 ==================
+let layers = {};
+const thumbCache = new Map();
+const hiresCache = new Map();
+function makeLayer(fn) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(W * RES); c.height = Math.round(H * RES);
+  const c2 = c.getContext('2d');
+  c2.setTransform(RES, 0, 0, RES, 0, 0);
+  c2.imageSmoothingEnabled = false;
+  const saved = ctx; ctx = c2;
+  try { fn(); } finally { ctx = saved; }
+  return c;
+}
+function layer(name, fn) { return layers[name] || (layers[name] = makeLayer(fn)); }
+
+function cellDev(r, c) {
+  const k = game.cs * RES;
+  const x0 = Math.round(c * k), y0 = Math.round(r * k), x1 = Math.round((c + 1) * k), y1 = Math.round((r + 1) * k);
+  return [x0, y0, x1 - x0, y1 - y0];
+}
+function buildPicCache() {
+  const g = game;
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(g.C * g.cs * RES); cv.height = Math.round(g.R * g.cs * RES);
+  g.pic = cv; g.pctx = cv.getContext('2d');
+  // 그림 속 음식은 네모 칸 (칸을 빈틈없이 채우고 은은한 입체 음영만)
+  for (let r = 0; r < g.R; r++) for (let c = 0; c < g.C; c++) {
+    if (!g.grid[r][c]) continue;
+    const [x, y, w, h] = cellDev(r, c);
+    paintSquare(g.pctx, x, y, w, h, g.grid[r][c], (r * 7 + c * 13) % 3);
+  }
+}
+function clearCell(r, c) { const [x, y, w, h] = cellDev(r, c); game.pctx.clearRect(x, y, w, h); }
+
+function drawThumb(i, x, y, w, h) {
+  const g = stageGrid(i);
+  const R = g.length, C = g[0].length;
+  const cs = Math.min(w / C, h / R);
+  const tw = C * cs, th = R * cs;
+  const key = i + '|' + w + '|' + h;
+  let cv = thumbCache.get(key);
+  if (!cv) {
+    cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(tw * RES)); cv.height = Math.max(1, Math.round(th * RES));
+    const c2 = cv.getContext('2d');
+    const kx = cv.width / C, ky = cv.height / R;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (!g[r][c]) continue;
+      c2.fillStyle = COLORS[g[r][c]];
+      const x0 = Math.round(c * kx), y0 = Math.round(r * ky);
+      c2.fillRect(x0, y0, Math.round((c + 1) * kx) - x0, Math.round((r + 1) * ky) - y0);
+    }
+    thumbCache.set(key, cv);
+  }
+  ctx.drawImage(cv, Math.round(x + (w - tw) / 2), Math.round(y + (h - th) / 2), Math.round(tw), Math.round(th));
+}
+
+// 클리어 화면용 고해상도 그림
+function hiresAspect(i) {
+  const src = STAGES[i].src;
+  if (src.type === 'paint') return src.def.w / src.def.h;
+  if (src.type === 'photo') return src.img.width / src.img.height;
+  const g = stageGrid(i);
+  return g[0].length / g.length;
+}
+function hiresFor(i, w, h) {
+  const key = i + '|' + w + '|' + h;
+  let cv = hiresCache.get(key);
+  if (cv) return cv;
+  cv = document.createElement('canvas');
+  cv.width = Math.round(w * RES); cv.height = Math.round(h * RES);
+  const g = cv.getContext('2d');
+  const src = STAGES[i].src;
+  if (src.type === 'paint') {
+    g.scale(cv.width / (src.def.w * 10), cv.height / (src.def.h * 10));
+    src.def.draw(makePainter(g, new Set(), 3));
+  } else if (src.type === 'photo') {
+    // 내 사진: 원본 사진 (배경은 아래에서 오려 냄)
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(src.img, 0, 0, cv.width, cv.height);
+  } else {
+    // 도트 그림: 실제로 먹은 음식 그림과 똑같이 (사물 테두리 포함, 배경 없음)
+    const art = stageGrid(i);
+    const R = art.length, C = art[0].length, k = Math.min(cv.width / C, cv.height / R);
+    const ox = (cv.width - C * k) / 2, oy = (cv.height - R * k) / 2;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (!art[r][c]) continue;
+      const x0 = Math.round(ox + c * k), y0 = Math.round(oy + r * k);
+      g.fillStyle = COLORS[art[r][c]];   // 완성 그림은 이음새 없는 깔끔한 도트
+      g.fillRect(x0, y0, Math.round(ox + (c + 1) * k) - x0, Math.round(oy + (r + 1) * k) - y0);
+    }
+  }
+  const mask = (src.type === 'paint' || src.type === 'photo') && stageGrid(i).mask;
+  if (mask) cv = cutOut(cv, mask);
+  hiresCache.set(key, cv);
+  return cv;
+}
+// 음식 그림에 남은 사물 모양대로 고해상도 그림을 오려 내고 검은 외곽선을 둘러 줌
+function cutOut(img, mask) {
+  const m = document.createElement('canvas');
+  m.width = mask.C; m.height = mask.R;
+  const mg = m.getContext('2d');
+  mg.fillStyle = '#000';
+  mask.cells.forEach((row, r) => row.forEach((v, c) => { if (v) mg.fillRect(c, r, 1, 1); }));
+  const W2 = img.width, H2 = img.height;
+  // 부드러운 모양의 마스크 (작게 그린 걸 크게 늘리면 가장자리가 둥글어짐)
+  const soft = document.createElement('canvas');
+  soft.width = W2; soft.height = H2;
+  const sg = soft.getContext('2d');
+  sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high';
+  sg.drawImage(m, 0, 0, W2, H2);
+  const cell = W2 / mask.C;
+  // 사진/그림을 마스크 모양으로 오림
+  const cut = document.createElement('canvas');
+  cut.width = W2; cut.height = H2;
+  const cg = cut.getContext('2d');
+  cg.drawImage(img, 0, 0);
+  cg.globalCompositeOperation = 'destination-in';
+  cg.drawImage(soft, 0, 0);
+  // 외곽선: 마스크를 조금씩 밀어서 겹쳐 그린 검은 실루엣 위에 오린 그림
+  const out = document.createElement('canvas');
+  out.width = W2; out.height = H2;
+  const og = out.getContext('2d');
+  const o = Math.max(2, cell * 0.28);
+  for (let a = 0; a < 8; a++) og.drawImage(soft, Math.cos(a * PI / 4) * o, Math.sin(a * PI / 4) * o);
+  og.globalCompositeOperation = 'source-in';
+  og.fillStyle = COLORS.D; og.fillRect(0, 0, W2, H2);
+  og.globalCompositeOperation = 'source-over';
+  og.drawImage(cut, 0, 0);
+  return out;
+}
+
+// ================== 진행 저장 ==================
+const store = (() => {
+  try {
+    localStorage.setItem('__antTest', '1');
+    localStorage.removeItem('__antTest');
+    return { persistent: true, get: k => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };
+  } catch (e) {}
+  const read = () => { try { return JSON.parse(window.name || '{}') || {}; } catch (e) { return {}; } };
+  return {
+    persistent: false,
+    get: k => (k in read() ? read()[k] : null),
+    set: (k, v) => { try { const o = read(); o[k] = v; window.name = JSON.stringify(o); } catch (e) {} }
+  };
+})();
+const MODES = ['solo', 'coop', 'versus'];
+const MODE_LABEL = { solo: '혼자 하기', coop: '협동 온라인', versus: '경쟁 온라인' };
+let cleared = 0, lastStage = 0, speed = 1, mode = 'solo';
+try {
+  cleared = parseInt(store.get('antPuzzleCleared') || '0', 10) || 0;
+  lastStage = parseInt(store.get('antPuzzleLast') || '0', 10) || 0;
+  speed = parseInt(store.get('antPuzzleSpeed') || '1', 10) || 1;
+  mode = store.get('antPuzzleMode') || 'solo';
+} catch (e) {}
+cleared = Math.max(0, Math.min(cleared, BASE_COUNT));
+lastStage = Math.max(0, Math.min(lastStage, cleared, BASE_COUNT - 1));
+speed = SPEEDS.includes(speed) ? speed : 1;
+mode = MODES.includes(mode) ? mode : 'solo';
+function saveProgress() {
+  try {
+    store.set('antPuzzleCleared', String(cleared));
+    store.set('antPuzzleLast', String(lastStage));
+    store.set('antPuzzleSpeed', String(speed));
+    store.set('antPuzzleMode', mode);
+  } catch (e) {}
+}
+function continueIdx() {
+  return lastStage < cleared ? Math.min(lastStage + 1, BASE_COUNT - 1) : lastStage;
+}
+function cycleSpeed() { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; saveProgress(); toast(`${speed}배속`); }
+function cycleMode() {
+  mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length]; saveProgress();
+  toast(mode === 'solo' ? '혼자 하기' : mode === 'coop' ? '협동: 각자 폰으로 한 그림을 같이 먹어요' : '경쟁: 각자 폰으로 같은 그림 먹기 대결!');
+}
+
+// ================== 사운드 · 진동 ==================
+let ac = null, lastBeep = 0, lastVib = 0, lastPick = 0, userTapped = false;
+function beep(f, d, v = 0.05, type = 'square') {
+  if (!ac) return;
+  try {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(v, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d);
+    o.connect(g).connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + d);
+  } catch (e) {}
+}
+// 음식을 집을 때 '콰작' 소리: 짧은 잡음을 두 번 (콰- 작) 터뜨려서 바삭하게 깨무는 느낌
+// (여러 마리가 동시에 집어도 시끄럽지 않게 간격을 둠)
+let noiseBuf = null;
+function crunch(at, len, freq, vol) {
+  if (!noiseBuf) {
+    noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.2), ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (Math.random() < 0.3 ? 1 : 0.35);   // 거친 알갱이 잡음
+  }
+  const src = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = noiseBuf;
+  bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.2;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(vol, at + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+  src.connect(bp).connect(g).connect(ac.destination);
+  src.start(at, Math.random() * 0.1, len + 0.02);
+}
+function pickSound() {
+  if (!ac || time - lastPick < 0.07) return;
+  lastPick = time;
+  try {
+    const t = ac.currentTime, f = 1400 + Math.random() * 600;
+    crunch(t, 0.05, f, 0.18);              // 콰-
+    crunch(t + 0.035, 0.07, f * 1.5, 0.13); // -작
+  } catch (e) {}
+}
+function melody(notes, gap, v) { notes.forEach((f, i) => setTimeout(() => beep(f, 0.16, v, 'square'), i * gap)); }
+function vibrate(ms) {
+  if (!userTapped || !navigator.vibrate || time - lastVib < 0.07) return;   // 화면을 한 번 눌러야 진동 가능
+  lastVib = time;
+  try { navigator.vibrate(ms); } catch (e) {}
+}
+
+// ================== 게임 상태 ==================
+const PER_PAGE = 12;
+let screen = 'menu';
+let menuPage = 0;
+let overlay = null;
+let toastMsg = null;
+let btns = [];
+let curInst = null;
+let time = 0;
+let clearT = 0, confetti = [];
+let games = [];           // 지금 하는 게임 (항상 1개)
+let vsWin = false, vsNote = '';
+let remoteToast = false;  // 협동 방장: 친구가 누른 결과 안내는 친구 폰에 띄움
+
+function toast(text) {
+  if (remoteToast) { netSend({ t: 'toast', text }); return; }
+  if (screen === 'play' && game) game.toast = { text, t: 1.6 };
+  else toastMsg = { text, t: 1.6 };
+}
+
+// 숨은 아이템
+const ITEMS = {
+  speed:   { icon: '⚡', name: '질주!',     desc: '쇠똥구리가 2배 빨라져요', color: '#ffd84a',
+             guide: ['일꾼 쇠똥구리가 모두 2배 빠르게 걸어요.', '음식을 더 빨리 날라 와요.'], time: '8초', where: '모든 모드' },
+  unchain: { icon: '✂', name: '사슬 끊기!', desc: '모든 사슬이 풀렸어요', color: '#bfe6ff',
+             guide: ['대기열의 사슬이 전부 풀려요.', '묶여 있던 쇠똥구리도 하나씩 고를 수 있어요.'], time: '즉시', where: '모든 모드' },
+  slow:    { icon: '🐌', name: '방해!',     desc: '상대 쇠똥구리가 느려져요', color: '#ff8fbf',
+             guide: ['상대 폰의 일꾼 쇠똥구리가 절반 속도로 느려져요.', '(혼자·협동에서는 질주로 바뀌어요)'], time: '6초', where: '경쟁 온라인' },
+  bomb:    { icon: '💣', name: '폭탄!',     desc: '주변 3×3 음식이 한 번에 없어져요', color: '#ffb070',
+             guide: ['집은 자리 주변 3×3 칸의 음식이 펑! 사라져요.', '사라진 만큼 대기 쇠똥구리 숫자도 줄어요.'], time: '즉시', where: '모든 모드' },
+};
+const ITEM_ORDER = ['speed', 'unchain', 'bomb', 'slow'];
+let itemsBack = null;   // 아이템 도감을 닫으면 돌아갈 화면
+function openItems(from) { itemsBack = from; overlay = 'items'; }
+// 아이템 도감: 어떤 아이템이 있고 무슨 효과인지
+function drawItems() {
+  panel(40, 726);
+  text('아이템 도감', W / 2, 72, 24, '#3a2412');
+  const intro = ['경쟁 온라인에서는 음식 속에 아이템이 숨어 있어요.', '쇠똥구리가 그 음식을 집는 순간 그 자리에서 발동!'];
+  intro.forEach((t, i) => text(t, W / 2, 100 + i * 20, fitSize(t, 340, 13, 10), '#5c4a38'));
+  let y = 140;
+  for (const key of ITEM_ORDER) {
+    const it = ITEMS[key];
+    pxBox(40, y, W - 80, 100, '#fffaf0', '#c8b08a', 3);
+    // 아이콘 배지
+    pxBox(52, y + 14, 52, 52, it.color, OUTLINE, 3);
+    text(it.icon, 78, y + 40, 26, '#3a2412');
+    text(it.name.replace('!', ''), 116, y + 22, 18, '#3a2412', 'left');
+    pxBox(W - 150, y + 10, 98, 22, '#f3e3c3', OUTLINE, 2);
+    text(`⏱ ${it.time}`, W - 101, y + 21, 12, '#3a2412');
+    it.guide.forEach((t, i) => text(t, 116, y + 48 + i * 19, fitSize(t, W - 166, 13, 10), '#3a2412', 'left'));
+    text(`나오는 곳: ${it.where}`, 116, y + 86, 11, '#8a6a48', 'left');
+    y += 106;
+  }
+  text('⏱ 시간은 1배속 기준이에요 (배속을 올리면 더 빨리 끝나요)', W / 2, y + 4, 11, '#8a6a48');
+  button(W / 2 - 70, y + 20, 140, 44, '닫기', () => { overlay = itemsBack; itemsBack = null; }, '#ffd34d', '#3a2412', 16);
+}
+function placeItems(g, idx) {
+  const rng = mulberry32(idx * 31 + 7);
+  const cells = [];
+  g.grid.forEach((row, r) => row.forEach((v, c) => { if (v) cells.push(r * g.C + c); }));
+  // 숨은 아이템 개수는 밸런스 표(hiddenItems)를 따름. 혼자·협동은 0개 → 아이템은 보관형 부스터로만 얻음
+  const hi = (BAL.hiddenItems && BAL.hiddenItems[mode]) || { count: 0 };
+  const n = Math.min(hi.max != null ? hi.max : 99, (hi.count || 0) + Math.floor(idx * (hi.perStage || 0)));
+  const types = hi.types || (mode === 'versus' ? ['speed', 'unchain', 'bomb', 'slow', 'slow'] : ['speed', 'unchain', 'bomb']);
+  g.items = new Map();
+  for (let i = 0; i < n && cells.length; i++) {
+    const k = cells.splice(Math.floor(rng() * cells.length), 1)[0];
+    g.items.set(k, types[Math.floor(rng() * types.length)]);
+  }
+}
+// 아이템은 쇠똥구리가 음식을 "집는 순간" 그 자리에서 발동 (어디서 나왔는지 보이게)
+function activateItem(type, x, y, r, c) {
+  if (type === 'speed') game.fx.speed = 8;
+  else if (type === 'unchain') game.queues.flat().forEach(a => a.group = null);
+  else if (type === 'bomb') bombAt(r, c);
+  else if (type === 'slow') {
+    if (mode === 'versus' && online()) netSend({ t: 'item', type: 'slow' });
+    else { type = 'speed'; game.fx.speed = 8; }
+  }
+  itemPop(type, x, y);
+  if (type === 'bomb') boomSound(); else melody([880, 1175, 1568], 70, 0.04);
+  vibrate(type === 'bomb' ? 120 : 40);
+}
+// 폭탄: 주변 3×3 음식을 없애고, 없어진 만큼 그 색 쇠똥구리의 숫자를 줄여서 끝까지 맞게 함
+// (다른 쇠똥구리가 가지러 가는 중인 음식은 남겨 둠)
+function bombAt(r0, c0) {
+  const lost = {};
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const r = r0 + dr, c = c0 + dc;
+    if (r < 0 || c < 0 || r >= game.R || c >= game.C) continue;
+    const v = game.grid[r][c];
+    if (!v || game.reserved[r][c]) continue;
+    game.grid[r][c] = null; clearCell(r, c); game.remaining--;
+    lost[v] = (lost[v] || 0) + 1;
+    game.items.delete(r * game.C + c);
+    onCellGone(r, c);
+    const [x, y] = cellCenter(r, c);
+    burst(x, y, COLORS[v], 6, 140);
+    burst(x, y, '#ffb070', 3, 90);
+  }
+  game.reach = reachMap(game.grid);
+  for (const [col, n0] of Object.entries(lost)) {
+    let n = n0;
+    // 대기열 뒤쪽 쇠똥구리부터 숫자를 줄임
+    const waiting = [];
+    game.queues.forEach((q, ci) => q.forEach((a, i) => { if (a.color === col) waiting.push({ a, ci, i }); }));
+    waiting.sort((p, q) => q.i - p.i);
+    for (const { a, ci } of waiting) {
+      if (!n) break;
+      const take = Math.min(n, a.total);
+      a.total -= take; n -= take;
+      if (a.total <= 0) {   // 숫자가 0이 되면 대기열에서 빠짐 (사슬로 묶였던 짝은 풀림)
+        if (a.group) a.group.members.forEach(m => m.group = null);
+        game.queues[ci].splice(game.queues[ci].indexOf(a), 1);
+      }
+    }
+    // 그래도 남으면 일터 쇠똥구리의 남은 몫을 줄임
+    game.slots.forEach((a, s) => {
+      if (!n || !a || a.color !== col) return;
+      const take = Math.min(n, a.total - a.dispatched);
+      a.total -= take; n -= take;
+      if (a.dispatched >= a.total) { game.slots[s] = null; burst(a.x, a.y, '#ffffff', 10, 70); }
+    });
+  }
+}
+function boomSound() {
+  if (!ac) return;
+  try {
+    const t = ac.currentTime;
+    crunch(t, 0.35, 260, 0.5); crunch(t + 0.02, 0.25, 900, 0.25);
+    beep(110, 0.3, 0.08, 'sine');
+  } catch (e) {}
+}
+// 집은 자리에서 터지는 효과 + 떠오르는 이름 + 짧은 안내
+function itemPop(type, x, y) {
+  const it = ITEMS[type];
+  game.pops.push({ x, y, t: 0, text: `${it.icon} ${it.name}`, color: it.color });
+  for (let i = 0; i < 18; i++) {
+    const a = i / 18 * PI * 2;
+    game.particles.push({ x, y, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: 0.6, color: i % 2 ? it.color : '#ffffff', s: 3 });
+  }
+  game.banner = { text: `${it.icon} ${it.name}`, sub: type === 'slow' ? '상대 쇠똥구리가 느려져요' : it.desc, color: it.color, t: 1.4 };
+}
+
+// ================== 부스터 (보관형 아이템: 클리어 선물로 모아 두고 막힐 때 꺼내 씀) ==================
+// 종류·보상 규칙은 밸런스 표(BAL.boosters / BAL.rewards). 혼자 하기에서만 쓸 수 있음.
+let inventory = {}, lastGift = null, bagBack = null;
+function saveInventory() { try { store.set('antPuzzleBoosters', JSON.stringify(inventory)); } catch (e) {} }
+function loadInventory() {
+  let saved = null;
+  try { saved = JSON.parse(store.get('antPuzzleBoosters') || 'null'); } catch (e) {}
+  inventory = {};
+  for (const k of BAL.boosterOrder || []) inventory[k] = 0;
+  Object.assign(inventory, saved && typeof saved === 'object' ? saved : (BAL.startInventory || {}));
+  for (const k in inventory) inventory[k] = Math.max(0, Math.min(BAL.maxPerBooster || 9, inventory[k] | 0));
+  if (!saved) saveInventory();
+}
+loadInventory();
+const boosterTotal = () => (BAL.boosterOrder || []).reduce((s, k) => s + (inventory[k] || 0), 0);
+function giveBooster(map) {
+  const got = [];
+  for (const [k, n] of Object.entries(map || {})) {
+    const B = BAL.boosters[k];
+    if (!B || !n) continue;
+    inventory[k] = Math.min(BAL.maxPerBooster || 9, (inventory[k] || 0) + n);
+    got.push(`${B.icon} ${B.name} ×${n}`);
+  }
+  saveInventory();
+  return got.length ? got : null;
+}
+// 처음 클리어했을 때 받는 선물: 스테이지 표 reward → 보스 직전 선물 → 보스 클리어(순환)
+function clearReward(idx) {
+  if (idx >= BASE_COUNT) return null;
+  const st = STAGES[idx], R = BAL.rewards || {};
+  if (st.reward) return st.reward;
+  if (idx + 1 < BASE_COUNT && STAGES[idx + 1].tier === 'boss' && R.beforeBoss) return R.beforeBoss;
+  if (st.tier === 'boss' && R.bossCycle && R.bossCycle.length) {
+    let k = 0;
+    for (let i = 0; i < idx; i++) if (STAGES[i].tier === 'boss') k++;
+    return R.bossCycle[k % R.bossCycle.length];
+  }
+  return null;
+}
+// 진행도를 올리고(처음 깬 경우만) 선물을 줌
+function firstClear(idx) {
+  if (idx >= BASE_COUNT || idx !== cleared) return;
+  cleared = idx + 1; saveProgress();
+  lastGift = giveBooster(clearReward(idx));
+}
+function boosterBlock(k) {   // 지금 쓸 수 없는 이유 (쓸 수 있으면 null)
+  const g = game;
+  if (!g || screen !== 'play') return '게임 중에만 쓸 수 있어요';
+  if (mode !== 'solo') return '부스터는 혼자 하기에서만 써요';
+  if (!(inventory[k] > 0)) return '이 부스터가 없어요';
+  if (g.state !== 'play' && g.state !== 'fail') return '지금은 쓸 수 없어요';
+  if (k === 'undo' && !g.slots.some(Boolean)) return '일터에 쇠똥구리가 없어요';
+  if (k === 'key' && !g.locks.some(l => !l.open)) return '잠긴 자물쇠가 없어요';
+  if (k === 'unchain' && !g.queues.flat().some(a => a.group)) return '풀 사슬이 없어요';
+  if (k === 'bomb' && g.remaining <= 0) return '남은 음식이 없어요';
+  return null;
+}
+function revive() {   // 실패 화면에서 부스터를 쓰면 이어서 함
+  if (game.state === 'fail') { game.state = 'play'; game.stuckT = 0; }
+  overlay = null; bagBack = null;
+}
+function useBooster(k) {
+  const why = boosterBlock(k);
+  if (why) { toast(why); beep(160, 0.1, 0.03); return false; }
+  const g = game, B = BAL.boosters[k];
+  if (k === 'bomb') {   // 폭탄은 놓을 곳을 고른 뒤에 하나 씀
+    revive(); g.aim = 'bomb';
+    return true;
+  }
+  inventory[k]--; saveInventory();
+  if (k === 'undo') undoSlot();
+  else if (k === 'key') {
+    openLock(0, 0, 'booster');
+  } else if (k === 'unchain') g.queues.flat().forEach(a => a.group = null);
+  revive();
+  g.banner = { text: `${B.icon} ${B.name}!`, sub: B.desc[0], color: B.color, t: 1.4 };
+  melody([660, 880, 1175], 70, 0.04); vibrate(40);
+  return true;
+}
+// 돌려보내기: 못 움직이는 쇠똥구리(없으면 남은 숫자가 가장 큰 쇠똥구리)를 가장 짧은 줄 맨 아래로
+function undoSlot() {
+  const g = game;
+  let best = -1, bs = -1;
+  g.slots.forEach((a, s) => { if (!a) return; const sc = (hasTarget(a.color) ? 0 : 1000) + a.total - a.dispatched; if (sc > bs) { bs = sc; best = s; } });
+  const a = g.slots[best];
+  g.slots[best] = null;
+  let col = 0;
+  for (let c = 1; c < 3; c++) if (g.queues[c].length < g.queues[col].length) col = c;
+  const b = { color: a.color, total: a.total - a.dispatched, group: null, id: 5000 + (++g.extraId), col,
+    dispatched: 0, cool: 0, shake: 0, inSlot: false, slot: -1, owner: 0, x: a.x, y: a.y };
+  g.antById[b.id] = b; g.queues[col].push(b);
+  burst(a.x, a.y, '#9fe08a', 12, 80);
+}
+// 폭탄 조준 중에 그림을 누름
+function placeBomb(x, y) {
+  const g = game;
+  const c = Math.floor((x - g.gx) / g.cs), r = Math.floor((y - g.gy) / g.cs);
+  g.aim = null;
+  if (r < 0 || c < 0 || r >= g.R || c >= g.C) { toast('폭탄을 취소했어요'); return; }
+  inventory.bomb = Math.max(0, (inventory.bomb || 0) - 1); saveInventory();
+  bombAt(r, c);
+  const [px, py] = cellCenter(r, c);
+  itemPop('bomb', px, py); boomSound(); vibrate(120);
+}
+function openBag(from) { bagBack = from; overlay = 'bag'; }
+function drawBag() {
+  const order = BAL.boosterOrder || [];
+  const h = 150 + order.length * 94;
+  const y0 = Math.max(30, (H - h) / 2);
+  panel(y0, h);
+  text('🎒 부스터 가방', W / 2, y0 + 32, 22, '#3a2412');
+  text('클리어 선물로 모아 두고, 막힐 때 꺼내 써요', W / 2, y0 + 58, 12, '#5c4a38');
+  let y = y0 + 76;
+  for (const k of order) {
+    const B = BAL.boosters[k], n = inventory[k] || 0, why = boosterBlock(k);
+    pxBox(40, y, W - 80, 88, '#fffaf0', '#c8b08a', 3);
+    pxBox(50, y + 12, 48, 48, n ? B.color : '#d8d0c4', OUTLINE, 3);
+    text(B.icon, 74, y + 36, 24, '#3a2412');
+    text(`×${n}`, 74, y + 74, 12, '#3a2412');
+    text(B.name, 110, y + 20, 16, '#3a2412', 'left');
+    B.desc.forEach((t, i) => text(t, 110, y + 46 + i * 18, fitSize(t, W - 160, 12, 9), '#5c4a38', 'left'));
+    if (!why) button(W - 112, y + 6, 62, 30, '쓰기', () => useBooster(k), '#ffd34d', '#3a2412', 14);
+    else { pxBox(W - 112, y + 6, 62, 30, '#e0d6c4', '#b8a888', 3); text('쓰기', W - 81, y + 21, 14, '#a89878'); }
+    y += 94;
+  }
+  button(W / 2 - 70, y + 6, 140, 44, '닫기', () => { overlay = bagBack; bagBack = null; }, '#e8dcc4', '#3a2412', 16);
+}
+
+function makeGame(idx, player) {
+  const d = buildStage(idx);
+  const R = d.grid.length, C = d.grid[0].length;
+  const { cs, gx, gy, T } = geometry(R, C);
+  let count = 0;
+  d.grid.forEach(r => r.forEach(v => { if (v) count++; }));
+  const g = {
+    idx, player, grid: d.grid, R, C, cs, gx, gy, T,
+    reserved: d.grid.map(r => r.map(() => false)),
+    queues: d.cols, slots: [null, null, null, null, null],
+    carriers: [], particles: [], remaining: count, total: count,
+    endT: 0, stuckT: 0, state: 'play',
+    fx: { speed: 0, swarm: 0, slow: 0 }, banner: null, toast: null, pops: [],
+    turn: 0, score: [0, 0], antById: {}, crSeq: 0, crById: {},
+    // 허들: 밸런스 표의 일터 칸 수보다 오른쪽 칸은 잠김 (🔓 열쇠 부스터로 열 수 있음)
+    locked: [0, 1, 2, 3, 4].map(k => k >= (STAGES[idx].slots || 5)), aim: null, extraId: 0,
+    // 기믹: 🧊 얼음 칸, 🔑 열쇠 칸, 🎁 선물 칸, 자물쇠 목록(열쇠를 먹을 때마다 앞에서부터 열림)
+    ice: new Set(d.ice || []), keys: new Set(d.keys || []), gifts: new Set(d.gifts || []),
+    locks: (d.locks || []).map(L => ({ ...L, open: false })), lockedCol: -1
+  };
+  for (const L of g.locks) { if (L.type === 'slot') g.locked[L.slot] = true; else g.lockedCol = L.col; }
+  g.reach = reachMap(g.grid);
+  g.queues.forEach((q, c) => q.forEach((a, i) => {
+    Object.assign(a, { id: c * 1000 + i, col: c, dispatched: 0, cool: 0, shake: 0, inSlot: false, slot: -1, owner: 0 });
+    a.x = colX(c); a.y = qPosY(i) + 260 + i * 30;
+    g.antById[a.id] = a;
+  }));
+  placeItems(g, idx);
+  return g;
+}
+// 혼자 하기에서 고른 스테이지 시작. 온라인 모드인데 아직 연결 전이면 방(로비)부터
+function chooseStage(idx) {
+  if (mode !== 'solo' && !online()) { openLobby(idx); return; }
+  if (mode !== 'solo' && net.role !== 'host') { toast('스테이지는 방장이 골라요'); return; }
+  if (mode !== 'solo') netStartGame(idx); else startStage(idx);
+}
+// ---- 기믹 안내 ----
+function stageGimmickKeys(i) {
+  const gm = (STAGES[i] && STAGES[i].gimmicks) || {}, out = [];
+  if (gm.lockSlots || gm.lockCols) out.push('key');
+  if (gm.lockCols) out.push('colLock');
+  if (gm.ice) out.push('ice');
+  if (gm.giftAt && gm.giftAt.length) out.push('gift');
+  return out;
+}
+const GIMMICK_FIRST = {};   // 기믹마다 처음 나오는 스테이지 (0부터)
+for (let i = 0; i < BASE_COUNT; i++) for (const k of stageGimmickKeys(i)) if (GIMMICK_FIRST[k] == null) GIMMICK_FIRST[k] = i;
+function gimmickSummary(i) {
+  const gm = STAGES[i].gimmicks || {}, G = BAL.gimmicks || {}, parts = [];
+  const locks = (gm.lockSlots || 0) + (gm.lockCols ? 1 : 0);
+  if (locks) parts.push(`🔑×${locks}`);
+  if (gm.lockCols) parts.push('⛓ 잠긴 줄');
+  if (gm.ice) parts.push('🧊 얼음');
+  if (gm.giftAt && gm.giftAt.length) parts.push(`🎁×${gm.giftAt.length}`);
+  return parts.length ? parts.join(' · ') + ' — 작전을 세워요!' : '';
+}
+let introList = [], introSeen = {};
+try { introSeen = JSON.parse(store.get('antPuzzleIntro') || '{}') || {}; } catch (e) {}
+function drawIntro() {
+  const G = BAL.gimmicks || {}, h = 150 + introList.length * 118, y0 = Math.max(40, (H - h) / 2);
+  panel(y0, h);
+  text('✨ 새로운 요소!', W / 2, y0 + 34, 24, '#c2561b');
+  let y = y0 + 64;
+  for (const k of introList) {
+    const it = G[k];
+    if (!it) continue;
+    pxBox(40, y, W - 80, 110, '#fffaf0', '#c8b08a', 3);
+    pxBox(52, y + 14, 54, 54, it.color, OUTLINE, 3);
+    text(it.icon, 79, y + 42, 28, '#3a2412');
+    text(it.name, 118, y + 22, 18, '#3a2412', 'left');
+    it.desc.forEach((t, i) => text(t, 118, y + 48 + i * 19, fitSize(t, W - 170, 13, 9), '#3a2412', 'left'));
+    text('💡 ' + it.tip, W / 2, y + 94, fitSize('💡 ' + it.tip, W - 100, 13, 9), '#c2561b');
+    y += 118;
+  }
+  button(W / 2 - 80, y + 8, 160, 48, '해 볼게요!', () => {
+    introList.forEach(k => introSeen[k] = 1);
+    try { store.set('antPuzzleIntro', JSON.stringify(introSeen)); } catch (e) {}
+    overlay = null;
+  });
+}
+function startStage(idx) {
+  games = [makeGame(idx, myPlayer())];
+  game = games[0]; buildPicCache();
+  game.mirror = mode === 'coop' && online() && net.role === 'guest';   // 협동 손님: 방장 화면을 그대로 따라감
+  vsWin = false; vsNote = '';
+  screen = 'play';
+  overlay = null;
+  if (idx < BASE_COUNT) { lastStage = idx; saveProgress(); }
+  lastGift = null;
+  if (idx === 0 && cleared === 0 && mode === 'solo') overlay = 'help';
+  // 허들 스테이지 알림
+  const tr = tierOf(idx), st = STAGES[idx];
+  if (tr && (st.tier === 'hard' || st.tier === 'boss'))
+    game.banner = { text: st.tier === 'boss' ? '🔥 보스 스테이지!' : '⚠ 어려운 스테이지', sub: gimmickSummary(idx) || '순서를 잘 생각해서 골라요', color: tr.color, t: 1.6 };
+  // 새 기믹이 처음 나오는 스테이지: 소개 창 (한 번만)
+  const fresh = stageGimmickKeys(idx).filter(k => GIMMICK_FIRST[k] === idx && !introSeen[k]);
+  if (fresh.length && idx < BASE_COUNT && overlay !== 'help') { introList = fresh; overlay = 'intro'; }
+}
+function myPlayer() { return online() && net.role === 'guest' ? 1 : 0; }
+
+// ================== 온라인: 각자 폰으로 협동 / 경쟁 (PeerJS로 폰끼리 직접 연결) ==================
+// 빠른 매칭: 먼저 들어온 사람이 방장이 되어 기다리고, 다음에 들어온 사람과 바로 짝지어짐 (들어온 순서대로)
+// 방 만들기: 4자리 번호로 친구와 같은 방에 들어감
+const NET_PREFIX = 'degulgu-beetle-v1-';
+let net = null;     // { peer, conn, role: 'host'|'guest', connected, quick, code, snapT, progT }
+let lobby = null;   // { stage, status }
+function online() { return !!(net && net.conn && net.connected); }
+function netSend(o) { if (net && net.conn && net.conn.open) { try { net.conn.send(o); } catch (e) {} } }
+function netClose(msg) {
+  if (net) {
+    const n = net; net = null;
+    try { n.conn && n.conn.close(); } catch (e) {}
+    try { n.peer && n.peer.destroy(); } catch (e) {}
+  }
+  if (msg) toast(msg);
+}
+function openLobby(idx) { lobby = { stage: idx, status: '아래에서 방식을 골라 주세요' }; overlay = 'lobby'; }
+function peerOk() {
+  if (window.Peer) return true;
+  lobby.status = '온라인 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.';
+  return false;
+}
+function setupConn(conn) {
+  conn.on('data', onNetData);
+  conn.on('close', onNetClose);
+  conn.on('error', () => {});
+}
+function hostAccept(conn) {
+  if (net.conn) {   // 이미 짝이 있으면 다음 사람은 돌려보냄 → 그 사람은 다시 줄을 섬
+    conn.on('open', () => { try { conn.send({ t: 'full' }); } catch (e) {} setTimeout(() => conn.close(), 300); });
+    return;
+  }
+  net.conn = conn;
+  setupConn(conn);
+  conn.on('open', () => {
+    net.connected = true;
+    if (net.quick) { try { net.peer.disconnect(); } catch (e) {} }   // 빠른 매칭 자리를 다음 사람에게 비워 줌
+    lobby && (lobby.status = '친구가 들어왔어요!');
+    netStartGame(lobby ? lobby.stage : 0);
+  });
+}
+function quickMatch() {
+  if (!peerOk()) return;
+  netClose();
+  lobby.status = '상대를 찾는 중…';
+  const id = NET_PREFIX + 'q-' + mode;
+  const peer = new window.Peer(id);
+  net = { peer, role: null, quick: true };
+  const me = net;
+  peer.on('open', () => { if (net !== me) return; net.role = 'host'; lobby.status = '기다리는 중… 다음에 들어오는 사람과 바로 짝지어져요'; });
+  peer.on('connection', conn => { if (net === me) hostAccept(conn); });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'unavailable-id') { try { peer.destroy(); } catch (e) {} net = null; joinPeer(id, false); }   // 이미 누가 기다리는 중 → 그 사람에게 들어감
+    else netFail(err);
+  });
+}
+function createRoom() {
+  if (!peerOk()) return;
+  netClose();
+  const code = String(1000 + Math.floor(Math.random() * 9000));
+  const peer = new window.Peer(NET_PREFIX + 'r-' + code);
+  net = { peer, role: 'host', code };
+  const me = net;
+  lobby.status = '방을 만드는 중…';
+  peer.on('open', () => { if (net === me) lobby.status = `방 번호 ${code} — 친구에게 알려 주세요`; });
+  peer.on('connection', conn => { if (net === me) hostAccept(conn); });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'unavailable-id') { netClose(); createRoom(); } else netFail(err);
+  });
+}
+function joinRoom() {
+  if (!peerOk()) return;
+  const code = (window.prompt('방 번호 4자리를 입력해 주세요') || '').trim();
+  if (!/^\d{4}$/.test(code)) { lobby.status = '방 번호는 숫자 4자리예요'; return; }
+  netClose();
+  joinPeer(NET_PREFIX + 'r-' + code, true);
+}
+function joinPeer(targetId, byCode) {
+  const peer = new window.Peer();
+  net = { peer, role: 'guest', quick: !byCode };
+  const me = net;
+  lobby.status = byCode ? '방에 들어가는 중…' : '기다리는 사람에게 연결하는 중…';
+  const retry = () => { netClose(); if (lobby) { if (byCode) lobby.status = '그 번호의 방을 찾을 수 없어요'; else setTimeout(() => { if (lobby && !net) quickMatch(); }, 300 + Math.random() * 700); } };
+  peer.on('open', () => {
+    if (net !== me) return;
+    const conn = peer.connect(targetId, { reliable: true });
+    net.conn = conn;
+    setupConn(conn);
+    conn.on('open', () => { if (net !== me) return; net.connected = true; if (lobby) lobby.status = '연결됐어요! 방장이 시작하는 중…'; });
+    setTimeout(() => { if (net === me && !net.connected) retry(); }, 7000);
+  });
+  peer.on('error', err => {
+    if (net !== me) return;
+    if (err.type === 'peer-unavailable') retry(); else netFail(err);
+  });
+}
+function netFail(err) {
+  netClose();
+  if (lobby) lobby.status = '연결에 실패했어요. 다시 시도해 주세요. (' + (err && err.type || '오류') + ')';
+}
+function netStartGame(idx) {
+  netSend({ t: 'start', stage: idx, mode, speed });
+  lobby = null;
+  startStage(idx);
+}
+function onNetClose() {
+  if (!net) return;
+  net = null;
+  if (screen === 'play' && game && game.state === 'play') {
+    if (mode === 'versus') { vsNote = '상대가 나갔어요'; endVersus(true); }
+    else { goMenu(); toast('친구가 나갔어요'); }
+  } else if (overlay === 'lobby') { lobby.status = '연결이 끊겼어요. 다시 시도해 주세요.'; }
+  else toast('친구와 연결이 끊겼어요');
+}
+function leaveOnline() { netSend({ t: 'bye' }); netClose(); goMenu(); }
+function onNetData(m) {
+  if (!m || !m.t) return;
+  const g = game;
+  switch (m.t) {
+    case 'full':   // 먼저 온 사람끼리 짝이 됐음 → 다시 줄 서기
+      netClose(); if (lobby) { lobby.status = '다시 찾는 중…'; setTimeout(() => { if (lobby && !net) quickMatch(); }, 500 + Math.random() * 800); }
+      break;
+    case 'start':
+      mode = m.mode; speed = m.speed; lobby = null;
+      startStage(m.stage);
+      break;
+    case 'bye': onNetClose(); break;
+    case 'toast': toast(m.text); break;
+    case 'speed': if (net && net.role === 'host') cycleSpeed(); break;
+    case 'pick':   // 협동: 친구가 쇠똥구리를 고름 (방장만 처리)
+      if (g && net.role === 'host' && g.state === 'play') {
+        if (g.turn !== 1) { netSend({ t: 'toast', text: '지금은 방장 차례예요' }); break; }
+        remoteToast = true; tryPick(m.c, 0); remoteToast = false;
+      }
+      break;
+    case 'snap': if (g && g.mirror) applySnap(m); break;
+    case 'end':    // 협동: 방장이 끝을 알림
+      if (g && g.mirror) {
+        g.state = m.kind; g.score = m.score || g.score;
+        if (m.kind === 'clear') { overlay = 'clear'; clearT = 0; makeConfetti(); firstClear(g.idx); melody([523, 659, 784, 1046, 1318], 110, 0.05); }
+        else { overlay = 'fail'; melody([392, 330, 262], 150, 0.05); }
+      }
+      break;
+    case 'prog': if (g) g.opp = { rem: m.rem, total: m.total }; break;
+    case 'item':   // 경쟁: 상대가 방해 아이템을 썼음
+      if (g && g.state === 'play') {
+        g.fx.slow = 6;
+        g.banner = { text: '🐌 방해당했어요!', sub: '6초 동안 내 쇠똥구리가 느려져요', color: '#ffd0dc', t: 1.6 };
+        vibrate(60);
+      }
+      break;
+    case 'vs':     // 경쟁: 상대가 끝남 (clear = 상대 승리, stuck = 상대가 막힘)
+      if (g && g.state === 'play') endVersus(m.kind === 'stuck', m.kind === 'stuck' ? '상대가 막혔어요' : '상대가 먼저 다 먹었어요');
+      break;
+  }
+}
+// 협동 방장 → 손님: 지금 게임 상태 (1초에 10번)
+function makeSnap() {
+  const g = game;
+  return {
+    t: 'snap',
+    grid: g.grid.map(r => r.map(v => v || '.').join('')).join(''),
+    rem: g.remaining, turn: g.turn, ice: [...g.ice], keys: [...g.keys], gifts: [...g.gifts], lk: g.locks.map(l => l.open), score: g.score, fx: g.fx, speed, st: g.state,
+    banner: g.banner ? { text: g.banner.text, sub: g.banner.sub, color: g.banner.color, t: g.banner.t } : null,
+    pops: g.pops.map(p => [Math.round(p.x), Math.round(p.y), p.text, p.color, p.t]),
+    q: g.queues.map(q => q.map(a => a.id)),
+    grp: [...new Set(g.queues.flat().filter(a => a.group).map(a => a.group))].map(gr => gr.members.map(m => m.id)),
+    s: g.slots.map(a => a ? [a.id, a.dispatched, a.owner] : 0),
+    cr: g.carriers.map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100) / 100, c.state === 'go' ? 0 : 1, Math.round(c.roll), c.item ? 1 : 0, c.color]),
+  };
+}
+function applySnap(s) {
+  const g = game;
+  for (let i = 0; i < s.grid.length; i++) {
+    const r = Math.floor(i / g.C), c = i % g.C;
+    if (g.grid[r][c] && s.grid[i] === '.') { g.grid[r][c] = null; clearCell(r, c); }
+  }
+  if (s.ice) { g.ice = new Set(s.ice); g.keys = new Set(s.keys); g.gifts = new Set(s.gifts); }
+  if (s.lk) s.lk.forEach((o, i) => { const L = g.locks[i]; if (!L || L.open === o) return; L.open = o; if (L.type === 'slot') g.locked[L.slot] = !o; else g.lockedCol = o ? -1 : L.col; });
+  g.remaining = s.rem; g.turn = s.turn; g.score = s.score; g.fx = s.fx; speed = s.speed;
+  if (s.banner && (!g.banner || g.banner.text !== s.banner.text)) g.banner = s.banner;
+  for (const [x, y, text, color, t] of s.pops) if (t < 0.15 && !g.pops.some(p => p.text === text && Math.abs(p.x - x) < 2)) {
+    g.pops.push({ x, y, t: 0, text, color });
+    for (let i = 0; i < 18; i++) { const a = i / 18 * PI * 2; g.particles.push({ x, y, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: 0.6, color: i % 2 ? color : '#ffffff', s: 3 }); }
+  }
+  const prevSlots = g.slots;
+  g.queues = s.q.map((ids, c) => ids.map(id => { const a = g.antById[id]; a.col = c; a.inSlot = false; return a; }));
+  Object.values(g.antById).forEach(a => a.group = null);
+  for (const ids of s.grp) { const grp = { members: ids.map(id => g.antById[id]) }; grp.members.forEach(m => m.group = grp); }
+  g.slots = s.s.map((e, k) => {
+    if (!e) { if (prevSlots[k]) burst(prevSlots[k].x, prevSlots[k].y, '#ffffff', 10, 70); return null; }
+    const a = g.antById[e[0]]; a.dispatched = e[1]; a.owner = e[2]; a.inSlot = true; a.slot = k; return a;
+  });
+  const seen = new Set();
+  for (const [id, x, y, ang, st, roll, item, color] of s.cr) {
+    seen.add(id);
+    let cr = g.crById[id];
+    if (!cr) cr = g.crById[id] = { id, x, y, color, walk: Math.random(), roll, ang };
+    cr.tx = x; cr.ty = y; cr.ang = ang; cr.state = st ? 'back' : 'go'; cr.troll = roll; cr.item = !!item;
+  }
+  for (const id in g.crById) if (!seen.has(+id)) {
+    const cr = g.crById[id];
+    if (cr.state === 'back') burst(HOLE.x, HOLE.y - 4, COLORS[cr.color], 3);
+    delete g.crById[id];
+  }
+  g.carriers = Object.values(g.crById);
+}
+
+const cellCenter = (r, c) => [game.gx + c * game.cs + game.cs / 2, game.gy + r * game.cs + game.cs / 2];
+
+// ---- 그림 바깥 네모 길 ----
+function trackParam(T, x, y) {
+  const w = T.x1 - T.x0, h = T.y1 - T.y0;
+  if (Math.abs(y - T.y0) < 0.5) return x - T.x0;
+  if (Math.abs(x - T.x1) < 0.5) return w + (y - T.y0);
+  if (Math.abs(y - T.y1) < 0.5) return w + h + (T.x1 - x);
+  return 2 * w + h + (T.y1 - y);
+}
+// a에서 b까지 네모 길을 따라 (짧은 쪽으로) 가는 꺾임점들. b 포함
+// force: 1(시계 방향) / -1(반시계)로 방향을 정할 수 있음. 없으면 짧은 쪽
+function along(T, a, b, force = 0) {
+  const w = T.x1 - T.x0, h = T.y1 - T.y0, P = 2 * w + 2 * h;
+  const ta = trackParam(T, a.x, a.y), tb = trackParam(T, b.x, b.y);
+  let d = ((tb - ta) % P + P) % P, dir = 1;
+  if (force) { dir = force; if (dir < 0) d = (P - d) % P; }
+  else if (d > P / 2) { d = P - d; dir = -1; }
+  const corners = [[0, T.x0, T.y0], [w, T.x1, T.y0], [w + h, T.x1, T.y1], [2 * w + h, T.x0, T.y1]];
+  const pts = corners
+    .map(([t, x, y]) => ({ dd: dir > 0 ? ((t - ta) % P + P) % P : ((ta - t) % P + P) % P, x, y }))
+    .filter(o => o.dd > 0.01 && o.dd < d - 0.01)
+    .sort((p, q) => p.dd - q.dd)
+    .map(o => ({ x: o.x, y: o.y }));
+  pts.push({ x: b.x, y: b.y });
+  return pts;
+}
+function trackDist(T, a, b) {
+  const P = 2 * (T.x1 - T.x0) + 2 * (T.y1 - T.y0);
+  const d = ((trackParam(T, b.x, b.y) - trackParam(T, a.x, a.y)) % P + P) % P;
+  return Math.min(d, P - d);
+}
+// 그림 크기에 따른 위치 정보 (게임과 순서 시뮬레이션이 같이 씀)
+// 그림과 쇠똥구리 길 사이 여백 (음식 한 칸 크기 단위). 테두리 길을 걷는 쇠똥구리·굴리는 공이
+// 가장자리 음식과 겹쳐 "음식을 뚫고 지나가는" 것처럼 보이지 않게 비워 둠.
+//  위: 걷는 옆모습 반 높이 + 차선 비킴 ≈ 0.9칸
+//  아래: 굴로 돌아올 때 물구나무 선 모습(약 1.7칸 높이)이 그림 쪽으로 솟음 ≈ 1.6칸
+//  양옆: 위에서 본 몸 반 폭 + 차선 비킴 ≈ 1.15칸
+const EDGE = { t: 1.0, b: 1.7, s: 1.25 }, EDGE_PX = 3;
+function geometry(R, C) {
+  const cs = Math.floor(Math.min((PIC.w - 2 * EDGE_PX) / (C + 2 * EDGE.s), (PIC.h - 2 * EDGE_PX) / (R + EDGE.t + EDGE.b), 30));
+  const top = PIC.y + EDGE_PX + EDGE.t * cs, bot = PIC.y + PIC.h - EDGE_PX - EDGE.b * cs;
+  const gx = Math.round(W / 2 - C * cs / 2), gy = Math.round(top + (bot - top - R * cs) / 2);
+  return { cs, gx, gy, T: { x0: PIC.x - TRACK_M, y0: PIC.y - TRACK_M, x1: PIC.x + PIC.w + TRACK_M, y1: PIC.y + PIC.h + TRACK_M } };
+}
+const geoCenter = (geo, r, c) => ({ x: geo.gx + c * geo.cs + geo.cs / 2, y: geo.gy + r * geo.cs + geo.cs / 2 });
+function geoEntry(geo, r, c, side) {
+  const T = geo.T, p = geoCenter(geo, r, c);
+  return side === 'T' ? { x: p.x, y: T.y0 } : side === 'B' ? { x: p.x, y: T.y1 } : side === 'L' ? { x: T.x0, y: p.y } : { x: T.x1, y: p.y };
+}
+// 집에서 나와 굴을 비켜 길로 올라가는 첫 지점
+function startPoints(geo, sx, sy) {
+  let dx = sx;
+  if (Math.abs(sx - HOLE.x) < HOLE_DETOUR) dx = HOLE.x + (sx >= HOLE.x ? HOLE_DETOUR : -HOLE_DETOUR);
+  const T = geo.T, px = Math.max(T.x0, Math.min(T.x1, dx));
+  return dx !== sx ? [{ x: dx, y: sy }, { x: px, y: T.y1 }] : [{ x: px, y: T.y1 }];
+}
+// 후보 경로의 길이 (집 → 길 → 들어가는 지점 → 빈 길로 꺾어서 → 음식)
+function candEntry(geo, info, k, cand) {
+  const C = info.C, r = Math.floor(k / C), c = k % C;
+  if (cand.via < 0) return { E: geoEntry(geo, r, c, cand.side), first: geoCenter(geo, r, c) };
+  const rk = info.root[cand.via], rr = Math.floor(rk / C), rc = rk % C;
+  return { E: geoEntry(geo, rr, rc, borderSide(rr, rc, info.R, C)), first: geoCenter(geo, rr, rc) };
+}
+function pathCost(geo, info, sx, sy, k, cand) {
+  const sp = startPoints(geo, sx, sy), P1 = sp[sp.length - 1];
+  const { E, first } = candEntry(geo, info, k, cand);
+  return Math.abs(sx - sp[0].x) + Math.abs(sy - P1.y) + trackDist(geo.T, P1, E) +
+    Math.hypot(E.x - first.x, E.y - first.y) + cand.steps * geo.cs;
+}
+// 실제 이동 경로: 갈 때 꺾임점들 + 돌아올 때 쓸 안쪽 길
+function makePath(sx, sy, k, cand) {
+  const info = game.reach, C = info.C, T = game.T;
+  const sp = startPoints(game, sx, sy), P1 = sp[sp.length - 1];
+  const { E } = candEntry(game, info, k, cand);
+  const inner = [];   // 길 → 음식 사이 빈칸 중심들
+  if (cand.via >= 0) {
+    const chain = [];
+    for (let n = cand.via; n >= 0; n = info.par[n]) chain.push(n);
+    chain.reverse();
+    for (const n of chain) { const p = geoCenter(game, Math.floor(n / C), n % C); inner.push(p); }
+  }
+  const [tx, ty] = cellCenter(Math.floor(k / C), k % C);
+  const go = simplify([...sp, ...along(T, P1, E), ...inner, { x: tx, y: ty }]);
+  return { go, E, inner };
+}
+// 일직선 위의 중간 점은 빼서 꺾이는 곳만 남김
+function simplify(pts) {
+  const out = [];
+  for (const p of pts) {
+    if (out.length && Math.hypot(out[out.length - 1].x - p.x, out[out.length - 1].y - p.y) < 0.01) continue;
+    if (out.length >= 2) {
+      const a = out[out.length - 2], b = out[out.length - 1];
+      if (Math.abs((b.x - a.x) * (p.y - b.y) - (b.y - a.y) * (p.x - b.x)) < 0.01) out.pop();
+    }
+    out.push(p);
+  }
+  return out;
+}
+// 굴로 돌아가는 길: 가까운 쪽으로 돌아감 (분산은 음식을 왼쪽·오른쪽 번갈아 고르는 것으로 함)
+// 굴 앞에서는 들어오는 쪽(왼쪽/오른쪽)에 따라 자리를 나눠 들어감
+// 두 방향의 실제 길이를 재서 짧은 쪽을 고름 (굴 바로 앞에서 음식을 들고 나와도 테두리를 한 바퀴 돌지 않게)
+// 나가는 곳도 들어온 곳에 묶이지 않음: 음식을 집은 순간의 그림에서 빈 길을 다시 찾아
+// "그림 밖으로 나가는 거리 + 테두리를 따라 굴까지 거리"가 가장 짧은 출구로 나감
+// (들어올 때는 막혀 있던 가까운 길이 그사이 다른 쇠똥구리가 음식을 먹어 열렸을 수도 있음)
+const pathLen = pts => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); return s; };
+function trackToHole(E) {
+  const T = game.T;
+  // 굴 바로 위(두 진입 지점 사이)로 나왔으면 테두리를 돌지 않고 곧장 굴로 들어감
+  // (안 그러면 어느 방향이든 진입 지점이 등 뒤에 있어서 그림을 한 바퀴 빙 돌아옴)
+  if (Math.abs(E.y - T.y1) < 0.5 && Math.abs(E.x - HOLE.x) < 12) {
+    const side = E.x >= HOLE.x ? 1 : -1;
+    const pts = [E, { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  }
+  const route = dir => {
+    // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
+    const side = dir > 0 ? 1 : -1;
+    const pts = [E, ...along(T, E, { x: HOLE.x + side * 12, y: T.y1 }, dir), { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  };
+  const a = route(1), b = route(-1);
+  return a.len <= b.len ? a : b;
+}
+function backPath(cr) {
+  const g = game, R = g.R, C = g.C, N = R * C, start = cr.r * C + cr.c;
+  // 집은 자리에서 빈칸으로 넓이 우선 탐색
+  const dist = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), q = [start];
+  dist[start] = 0;
+  for (let i = 0; i < q.length; i++) {
+    const k = q[i], r = Math.floor(k / C), c = k % C;
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g.grid[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) continue;
+      dist[n] = dist[k] + 1; par[n] = k; q.push(n);
+    }
+  }
+  // 가장자리 칸마다 바깥 길로 나가 굴까지 가는 길이를 재서 가장 짧은 출구 선택
+  let best = null;
+  for (const k of q) {
+    const r = Math.floor(k / C), c = k % C;
+    const sides = [];
+    if (r === 0) sides.push('T');
+    if (r === R - 1) sides.push('B');
+    if (c === 0) sides.push('L');
+    if (c === C - 1) sides.push('R');
+    for (const s of sides) {
+      const E = geoEntry(g, r, c, s), p = geoCenter(g, r, c);
+      const tr = trackToHole(E);
+      const len = dist[k] * g.cs + Math.hypot(E.x - p.x, E.y - p.y) + tr.len;
+      if (!best || len < best.len) best = { k, tr, len };
+    }
+  }
+  if (!best) return simplify([...cr.inner.slice().reverse(), ...trackToHole(cr.E).pts]);   // 만일을 위한 예전 길
+  const chain = [];
+  for (let n = best.k; n !== start && n >= 0; n = par[n]) chain.push(geoCenter(g, Math.floor(n / C), n % C));
+  chain.reverse();
+  return simplify([{ x: cr.x, y: cr.y }, ...chain, ...best.tr.pts]);
+}
+
+// 가져올 음식 고르기: side가 -1이면 그림 왼쪽 절반, 1이면 오른쪽 절반에서 가장 가까운 음식.
+// 그쪽에 닿을 수 있는 음식이 없으면 반대쪽에서 고름.
+// 일터마다 왼쪽·오른쪽을 번갈아 고르면 음식이 양쪽에서 고르게 사라지고 쇠똥구리도 자연스럽게 나뉨
+function findTarget(color, sx, sy, side = 0) {
+  const info = game.reach, half = game.C / 2;
+  let best = null, bd = 1e9, alt = null, ad = 1e9;
+  for (const [k, cands] of info.acc) {
+    const r = Math.floor(k / game.C), c = k % game.C;
+    if (game.grid[r][c] !== color || game.reserved[r][c] || game.ice.has(k)) continue;
+    const mine = !side || (side < 0 ? c < half : c >= half);
+    for (const cand of cands) {
+      const d = pathCost(game, info, sx, sy, k, cand);
+      if (mine) { if (d < bd) { bd = d; best = { k, r, c, cand }; } }
+      else if (d < ad) { ad = d; alt = { k, r, c, cand }; }
+    }
+  }
+  best = best || alt;
+  if (best) best.path = makePath(sx, sy, best.k, best.cand);
+  return best;
+}
+function hasTarget(color) {
+  for (const k of game.reach.acc.keys()) {
+    const r = Math.floor(k / game.C), c = k % game.C;
+    if (game.grid[r][c] === color && !game.reserved[r][c] && !game.ice.has(k)) return true;
+  }
+  return false;
+}
+
+// 음식 칸이 없어진 뒤 (쇠똥구리가 집었거나 폭탄): 옆 얼음 깨기, 🔑 자물쇠 열기, 🎁 선물
+function onCellGone(r, c) {
+  const g = game, k = r * g.C + c;
+  g.ice.delete(k);
+  for (const [dr, dc] of D4) {
+    const n = (r + dr) * g.C + (c + dc);
+    if (r + dr < 0 || c + dc < 0 || r + dr >= g.R || c + dc >= g.C || !g.ice.has(n)) continue;
+    g.ice.delete(n);
+    const [x, y] = cellCenter(r + dr, c + dc);
+    burst(x, y, '#e8f8ff', 7, 90); burst(x, y, '#9fd8ff', 4, 60);
+    if (ac) try { crunch(ac.currentTime, 0.06, 3200, 0.12); } catch (e) {}
+  }
+  const [x, y] = cellCenter(r, c);
+  if (g.keys.has(k)) { g.keys.delete(k); openLock(x, y, 'key'); }
+  if (g.gifts.has(k)) {
+    g.gifts.delete(k);
+    const G = BAL.gimmicks && BAL.gimmicks.gift, list = (G && G.rewards) || ['undo'];
+    if (mode === 'solo') {
+      const pick = list[Math.floor(Math.random() * list.length)], B = BAL.boosters[pick];
+      giveBooster({ [pick]: 1 });
+      g.pops.push({ x, y, t: 0, text: `🎁 ${B.icon} ${B.name}`, color: '#ff8fbf' });
+      g.banner = { text: '🎁 선물!', sub: `${B.icon} ${B.name} 부스터를 받았어요 (가방에 보관)`, color: '#ffc0dc', t: 1.6 };
+      melody([784, 988, 1175, 1568], 80, 0.05); vibrate(60);
+    }
+  }
+}
+// 자물쇠 하나 열기 (🔑 음식을 먹었거나 🔓 열쇠 부스터)
+function openLock(x, y, why) {
+  const g = game, L = g.locks.find(l => !l.open);
+  if (!L) return false;
+  L.open = true;
+  let p;
+  if (L.type === 'slot') { g.locked[L.slot] = false; p = slotCenter(L.slot); }
+  else { g.lockedCol = -1; p = { x: colX(L.col), y: qPosY(0) }; }
+  burst(p.x, p.y, '#ffd84a', 18, 100); burst(p.x, p.y, '#ffffff', 8, 70);
+  if (why === 'key') {
+    g.pops.push({ x, y, t: 0, text: '🔑 열쇠!', color: '#ffd84a' });
+    g.banner = { text: '🔑 철컥!', sub: L.type === 'slot' ? '잠긴 일터 한 칸이 열렸어요' : '잠긴 대기열 줄이 풀렸어요', color: '#ffe48a', t: 1.6 };
+    melody([523, 784, 1046, 1318], 70, 0.05); vibrate(70);
+  }
+  return true;
+}
+function freeSlots() { const f = []; game.slots.forEach((s, k) => { if (!s && !game.locked[k]) f.push(k); }); return f; }
+
+function tryPick(c, i) {
+  const a = game.queues[c][i];
+  if (i > 0) { a.shake = 0.4; toast('맨 위에 있는 쇠똥구리만 고를 수 있어요'); beep(160, 0.1, 0.03); return; }
+  if (c === game.lockedCol) { a.shake = 0.4; toast('⛓ 잠긴 줄이에요. 그림 속 🔑을 먹으면 풀려요'); beep(160, 0.1, 0.03); return; }
+  const members = a.group ? a.group.members.slice() : [a];
+  if (a.group && !members.every(m => game.queues[m.col][0] === m)) {
+    members.forEach(m => m.shake = 0.4);
+    toast('사슬로 묶인 둘이 모두 맨 위에 있어야 해요');
+    beep(160, 0.1, 0.03);
+    return;
+  }
+  const free = freeSlots();
+  if (free.length < members.length) {
+    members.forEach(m => m.shake = 0.4);
+    toast(members.length > 1 ? `빈 자리가 ${members.length}칸 필요해요` : '일터에 빈 자리가 없어요');
+    beep(160, 0.1, 0.03);
+    return;
+  }
+  members.sort((p, q) => p.col - q.col).forEach((m, k) => {
+    game.queues[m.col].shift();
+    m.inSlot = true; m.slot = free[k]; m.cool = 0.2; m.owner = game.turn;
+    game.slots[free[k]] = m;
+  });
+  if (mode === 'coop') game.turn ^= 1;   // 협동: 고를 때마다 차례가 바뀜
+  beep(520 + members.length * 120, 0.08, 0.04);
+}
+
+function canPickAny() {
+  const free = freeSlots().length;
+  if (!free) return false;
+  for (let c = 0; c < 3; c++) {
+    const a = game.queues[c][0];
+    if (!a || c === game.lockedCol) continue;
+    if (!a.group) return true;
+    const ms = a.group.members;
+    if (ms.every(m => game.queues[m.col][0] === m) && free >= ms.length) return true;
+  }
+  return false;
+}
+function slotCanWork() { return game.slots.some(s => s && hasTarget(s.color)); }
+
+function burst(x, y, color, n, sp = 90) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * PI * 2, v = sp * (0.4 + Math.random() * 0.8);
+    game.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 50, life: 0.4 + Math.random() * 0.3, color, s: 3 });
+  }
+}
+function startClear() {
+  if (mode === 'versus') { netSend({ t: 'vs', kind: 'clear' }); endVersus(true, '먼저 다 먹었어요'); return; }
+  game.state = 'clear'; overlay = 'clear'; clearT = 0;
+  if (online()) netSend({ t: 'end', kind: 'clear', score: game.score });
+  makeConfetti();
+  firstClear(game.idx);
+  melody([523, 659, 784, 1046, 1318], 110, 0.05);
+  vibrate(80);
+}
+function makeConfetti() {
+  confetti = [];
+  const cols = ['#ef4f5a', '#ffd84a', '#5cc45a', '#4a82e8', '#ff8fbf', '#a66be6', '#ff9a3c'];
+  for (let i = 0; i < 90; i++) confetti.push({
+    x: Math.random() * W, y: -20 - Math.random() * 400, vy: 60 + Math.random() * 90,
+    sw: Math.random() * PI * 2, c: cols[i % cols.length], s: 4 + (i % 3) * 2
+  });
+}
+// 경쟁 결과 (won: 내가 이겼는지)
+function endVersus(won, note) {
+  if (!game || game.state === 'over') return;
+  vsWin = won; if (note) vsNote = note;
+  game.state = 'over';
+  overlay = 'vsEnd'; clearT = 0;
+  if (won) makeConfetti(); else confetti = [];
+  if (won && game.remaining === 0) firstClear(game.idx);
+  melody(won ? [523, 659, 784, 1046] : [392, 330, 262], 110, 0.05);
+  vibrate(80);
+}
+
+// ================== 업데이트 ==================
+function update(dt) {
+  time += dt;
+  if (toastMsg) { toastMsg.t -= dt; if (toastMsg.t <= 0) toastMsg = null; }
+  if (overlay === 'clear' || overlay === 'vsEnd') {
+    clearT += dt;
+    for (const p of confetti) { p.y += p.vy * dt; p.sw += dt * 4; if (p.y > H + 10) { p.y = -10; p.x = Math.random() * W; } }
+  }
+  if (screen !== 'play' || !games.length) return;
+  game = games[0];
+  if ((overlay === 'items' || overlay === 'bag' || overlay === 'intro') && !online()) return;   // 혼자 할 때 도감을 보는 동안은 잠깐 멈춤
+  if (game.mirror) updateMirror(dt); else updateGame(dt);
+  // 온라인: 협동 방장은 상태를, 경쟁은 내 진행도를 보냄
+  if (online()) {
+    net.sendT = (net.sendT || 0) + dt;
+    if (mode === 'coop' && net.role === 'host' && net.sendT >= 0.1) { net.sendT = 0; netSend(makeSnap()); }
+    if (mode === 'versus' && net.sendT >= 0.4) { net.sendT = 0; netSend({ t: 'prog', rem: game.remaining, total: game.total }); }
+  }
+}
+const SAFE_EXIT = () => beetlePx() * 15 + 2;   // 집에서 막 나간 쇠똥구리가 이만큼 멀어져야 다음이 출발
+// 안전거리: 같은 방향으로 가는 앞 쇠똥구리와 SAFE보다 가까워지지 않게, 갈 수 있는 거리를 줄임
+// (마주 오는 쇠똥구리는 길 양쪽으로 비켜 지나가고, 목적지 바로 앞에서는 기다리지 않음)
+function roomAhead(cr, SAFE) {
+  const t = cr.pts[cr.i];
+  if (!t) return Infinity;
+  const fx = t.x - cr.x, fy = t.y - cr.y, fd = Math.hypot(fx, fy);
+  if (fd < 0.01) return Infinity;
+  const last = cr.pts[cr.pts.length - 1];
+  if (cr.i === cr.pts.length - 1 && fd < SAFE) return Infinity;   // 음식·굴 바로 앞
+  const ux = fx / fd, uy = fy / fd;
+  const nearHole = p => Math.hypot(p.x - HOLE.x, p.y - HOLE.y) < 30;
+  if (nearHole(cr) || Math.hypot(last.x - cr.x, last.y - cr.y) < SAFE) return Infinity;
+  let room = Infinity;
+  for (const o of game.carriers) {
+    if (o === cr || o.done || o.state !== cr.state || nearHole(o)) continue;   // 같은 일(가지러/굴려 오기)끼리만, 굴 입구는 예외
+    const ox = o.x - cr.x, oy = o.y - cr.y;
+    const ahead = ox * ux + oy * uy, side = Math.abs(ox * uy - oy * ux);
+    if (ahead <= 0 || ahead > SAFE * 2 || side > SAFE * 0.5) continue;
+    // 거의 같은 방향으로 가는 앞 쇠똥구리만 (마주 오거나 꺾어 나가는 건 그냥 지나감)
+    if (Math.cos(o.ang - cr.ang) < 0.85) continue;
+    room = Math.min(room, Math.max(0, ahead - SAFE));
+  }
+  return room;
+}
+// 화면 위치를 부드럽게 따라가는 부분 (방장·손님 공통)
+function animateLocal(dt) {
+  if (game.toast) { game.toast.t -= dt; if (game.toast.t <= 0) game.toast = null; }
+  if (game.banner) { game.banner.t -= dt; if (game.banner.t <= 0) game.banner = null; }
+  for (const p of game.pops) p.t += dt;
+  game.pops = game.pops.filter(p => p.t < 1.4);
+  const k = Math.min(1, dt * 11);
+  game.queues.forEach((q, c) => q.forEach((a, i) => { a.tx = colX(c); a.ty = qPosY(i); }));
+  game.slots.forEach((a, s) => { if (a) { const p = slotCenter(s); a.tx = p.x; a.ty = p.y; } });
+  for (const a of [...game.queues.flat(), ...game.slots.filter(Boolean)]) {
+    a.x += (a.tx - a.x) * k; a.y += (a.ty - a.y) * k;
+    if (a.shake > 0) a.shake = Math.max(0, a.shake - dt);
+  }
+  for (const p of game.particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
+  game.particles = game.particles.filter(p => p.life > 0);
+}
+// 협동 손님: 방장이 보낸 위치로 쇠똥구리를 부드럽게 옮기기만 함
+function updateMirror(dt) {
+  animateLocal(dt);
+  const k = Math.min(1, dt * 10);
+  for (const cr of game.carriers) {
+    if (cr.tx === undefined) continue;
+    const moving = Math.hypot(cr.tx - cr.x, cr.ty - cr.y) > 0.5;
+    cr.x += (cr.tx - cr.x) * k; cr.y += (cr.ty - cr.y) * k;
+    cr.roll += ((cr.troll || 0) - cr.roll) * k;
+    if (moving) cr.walk += dt * speed;
+  }
+}
+function updateGame(dt) {
+  const sdt = dt * speed;   // 배속 적용
+  for (const f in game.fx) game.fx[f] = Math.max(0, game.fx[f] - sdt);
+  animateLocal(dt);
+  // 일터 쇠똥구리가 자기 집에서 일꾼 쇠똥구리를 내보냄
+  if (game.state === 'play') {
+    const gap = DISPATCH_GAP;
+    game.slots.forEach((a, s) => {
+      if (!a || Math.hypot(a.tx - a.x, a.ty - a.y) > 4) return;
+      a.cool -= sdt;
+      while (a.cool <= 0) {
+        const h = homePos(s);
+        // 집 앞이 붐비면 잠깐 기다렸다가 출발 (길에 쇠똥구리가 너무 많이 몰리지 않게)
+        if (game.carriers.some(o => o.state === 'go' && Math.hypot(o.x - h.x, o.y - h.y) < SAFE_EXIT())) { a.cool = 0; return; }
+        a.side = a.side === -1 ? 1 : -1;   // 이번엔 왼쪽, 다음엔 오른쪽 음식
+        const t = findTarget(a.color, h.x, h.y, a.side);
+        if (!t) { a.side = -a.side; a.cool = 0; return; }
+        game.reserved[t.r][t.c] = true;
+        game.carriers.push({ id: ++game.crSeq, color: a.color, owner: a.owner, x: h.x, y: h.y, r: t.r, c: t.c, E: t.path.E, inner: t.path.inner,
+          pts: t.path.go, i: 0, state: 'go', walk: Math.random(), ang: -PI / 2, roll: 0, lag: -a.cool });
+        a.dispatched++; a.cool += gap;
+        if (a.dispatched >= a.total) {          // 다 보냈으면 바로 사라짐
+          game.slots[s] = null;
+          burst(a.x, a.y, '#ffffff', 10, 70);
+          beep(880, 0.06, 0.03);
+          return;
+        }
+      }
+    });
+  }
+
+  const mul = (game.fx.speed > 0 ? 2 : 1) * (game.fx.slow > 0 ? 0.5 : 1);
+  const SAFE = beetlePx() * 15 + 5;   // 앞 쇠똥구리와 지킬 거리 (몸길이 + 여유)
+  for (const cr of game.carriers) {
+    // 이번 프레임 중간에 출발한 쇠똥구리는 출발 후 지난 시간만큼만 움직임
+    let step = SPEED * mul * (cr.lag !== undefined ? Math.min(cr.lag, sdt) : sdt);
+    // 앞 쇠똥구리와 거리 유지. 단, 좁은 길에서 서로 기다리느라 0.8초 넘게 멈춰 있으면 양보 없이 지나감 (교통 체증 교착 방지)
+    if (cr.passT > 0) cr.passT -= sdt;
+    const room = cr.passT > 0 ? Infinity : roomAhead(cr, SAFE);
+    cr.waitT = room <= 0.01 && step > 0 ? (cr.waitT || 0) + sdt : 0;
+    if (cr.waitT > 0.8) { cr.passT = 0.6; cr.waitT = 0; }
+    step = Math.min(step, room);
+    delete cr.lag;
+    cr.walk += sdt * mul;
+    if (cr.state === 'back' && Math.random() < Math.min(1, sdt * 4)) {
+      const ux = Math.cos(cr.ang);
+      game.particles.push({ x: cr.x - ux * 4 + (Math.random() * 8 - 4), y: cr.y + ballR() - 1,
+        vx: -ux * 20 + (Math.random() * 16 - 8), vy: -25 - Math.random() * 20, life: 0.35, color: '#cfae80', s: 3 });
+    }
+    while (step > 0 && !cr.done) {
+      const t = cr.pts[cr.i];
+      const dx = t.x - cr.x, dy = t.y - cr.y, d = Math.hypot(dx, dy);
+      if (d > 0.01) cr.ang = Math.atan2(dy, dx);
+      if (d > step) {
+        cr.x += dx / d * step; cr.y += dy / d * step;
+        if (cr.state === 'back') cr.roll += step;
+        step = 0;
+      } else {
+        cr.x = t.x; cr.y = t.y; step -= d;
+        if (cr.state === 'back') cr.roll += d;
+        if (++cr.i < cr.pts.length) continue;
+        if (cr.state === 'go') {
+          const key = cr.r * game.C + cr.c;
+          game.grid[cr.r][cr.c] = null;
+          game.reserved[cr.r][cr.c] = false;
+          clearCell(cr.r, cr.c);
+          game.reach = reachMap(game.grid);
+          game.remaining--;
+          onCellGone(cr.r, cr.c);
+          if (game.items.has(key)) {   // 숨은 아이템: 집는 순간 이 자리에서 발동
+            const type = game.items.get(key); game.items.delete(key);
+            cr.item = type;
+            activateItem(type, cr.x, cr.y, cr.r, cr.c);
+          }
+          cr.state = 'back'; cr.pts = backPath(cr); cr.i = 0;
+          vibrate(12);   // 안드로이드: 짧은 진동
+          pickSound();   // 아이폰 등 진동이 안 되는 폰: 작은 '톡' 소리
+        } else {
+          cr.done = true;
+          game.score[cr.owner || 0]++;
+          burst(HOLE.x, HOLE.y - 4, COLORS[cr.color], 3);
+          if (time - lastBeep > 0.05) { lastBeep = time; beep(1100 + Math.random() * 300, 0.03, 0.015); }
+        }
+      }
+    }
+  }
+  game.carriers = game.carriers.filter(c => !c.done);
+
+  if (game.state === 'play') {
+    if (game.remaining === 0 && game.carriers.length === 0) {
+      game.endT += dt;
+      if (game.endT > 0.4) startClear();
+    } else {
+      const busy = game.carriers.length > 0 ||
+        game.slots.some(s => s && Math.hypot(s.tx - s.x, s.ty - s.y) > 4);
+      if (!busy && !slotCanWork() && !canPickAny()) {
+        game.stuckT += dt;
+        if (game.stuckT > 0.9) {
+          if (mode === 'versus') { netSend({ t: 'vs', kind: 'stuck' }); endVersus(false, '일터가 꽉 막혔어요'); }
+          else {
+            game.state = 'fail'; overlay = 'fail'; melody([392, 330, 262], 150, 0.05);
+            if (online()) netSend({ t: 'end', kind: 'fail' });
+          }
+        }
+      } else game.stuckT = 0;
+    }
+  }
+}
+
+// ================== 그리기 도우미 (도트 UI) ==================
+function text(t, x, y, size, color, align = 'center', stroke = null) {
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  x = Math.round(x); y = Math.round(y);
+  if (stroke) {
+    ctx.fillStyle = stroke;
+    const o = Math.max(1, Math.round(size / 10));
+    for (const [dx, dy] of [[-o,0],[o,0],[0,-o],[0,o],[-o,-o],[o,o],[-o,o],[o,-o]]) ctx.fillText(t, x + dx, y + dy);
+  }
+  ctx.fillStyle = color; ctx.fillText(t, x, y);
+}
+function fitSize(t, maxW, size, min = 10) {
+  for (let s = size; s > min; s -= 1) { ctx.font = `${s}px ${FONT}`; if (ctx.measureText(t).width <= maxW) return s; }
+  return min;
+}
+function pxBox(x, y, w, h, fill, border = OUTLINE, u = 3) {
+  x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
+  ctx.fillStyle = border;
+  ctx.fillRect(x + u, y, w - 2 * u, h);
+  ctx.fillRect(x, y + u, w, h - 2 * u);
+  ctx.fillStyle = fill;
+  ctx.fillRect(x + u, y + u, w - 2 * u, h - 2 * u);
+}
+function button(x, y, w, h, label, fn, color = '#ffcf4a', tc = '#3a2412', size = 16) {
+  pxBox(x, y + 4, w, h, OUTLINE);
+  pxBox(x, y, w, h, color);
+  ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.fillRect(Math.round(x + 6), Math.round(y + 6), Math.round(w - 12), 3);
+  ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.fillRect(Math.round(x + 3), Math.round(y + h - 6), Math.round(w - 6), 3);
+  text(label, x + w / 2, y + h / 2, size, tc);
+  btns.push({ x, y, w, h, fn, inst: curInst });
+}
+function pxStar(x, y, s, color) {
+  x = Math.round(x); y = Math.round(y);
+  ctx.fillStyle = color;
+  ctx.fillRect(x - s, y - s * 3, s * 2, s * 6);
+  ctx.fillRect(x - s * 3, y - s, s * 6, s * 2);
+  ctx.fillRect(x - s * 2, y - s * 2, s * 4, s * 4);
+}
+
+// 밝은 모래색 바닥 (어두운 쇠똥구리도 잘 보이게)
+const PAD = { soil: '#d7b88a', soilDot: '#c9a676', panel: '#ead7b2', slot: '#f7ecd4', slotLine: '#a8875e', col: '#f4e6c8', colLine: '#a8875e', front: '#fff6dc', dash: '#b89870' };
+function drawGround() {
+  ctx.fillStyle = '#8fd168'; ctx.fillRect(0, 0, W, GROUND_Y);
+  ctx.fillStyle = '#7cc058';
+  for (let i = 0; i < 140; i++) {
+    const x = (i * 73) % W, y = (i * 151) % (GROUND_Y - 8);
+    ctx.fillRect(x - x % 4, y - y % 4, 4, 4);
+  }
+  ctx.fillStyle = '#a8e080';
+  for (let i = 0; i < 50; i++) {
+    const x = (i * 131 + 17) % W, y = (i * 97 + 31) % (GROUND_Y - 8);
+    ctx.fillRect(x - x % 4, y - y % 4, 4, 8);
+  }
+  ctx.fillStyle = PAD.soil; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+  ctx.fillStyle = '#8fd168';
+  for (let x = 0; x < W; x += 8) ctx.fillRect(x, GROUND_Y, 8, (x / 8) % 3 === 0 ? 8 : 4);
+  ctx.fillStyle = PAD.soilDot;
+  for (let i = 0; i < 90; i++) {
+    const x = (i * 97) % W, y = GROUND_Y + 12 + (i * 53) % (H - GROUND_Y - 12);
+    ctx.fillRect(x - x % 4, y - y % 4, 4 + (i % 2) * 4, 4);
+  }
+}
+function drawPlayStatic() {
+  drawGround();
+  pxBox(PIC.x - 6, PIC.y - 8, PIC.w + 12, PIC.h + 14, '#fff3dc', OUTLINE, 4);
+  ctx.fillStyle = '#ffe0d8';
+  for (let y = PIC.y - 4; y < PIC.y + PIC.h + 2; y += 12)
+    for (let x = PIC.x - 2; x < PIC.x + PIC.w + 2; x += 12)
+      if (((x - PIC.x) / 12 + (y - PIC.y) / 12) % 2 === 0)
+        ctx.fillRect(x, y, Math.min(12, PIC.x + PIC.w + 2 - x), Math.min(12, PIC.y + PIC.h + 2 - y));
+  // 쇠똥구리 굴 (돌아오는 구멍 하나, 가운데)
+  ctx.fillStyle = '#5a3a22'; ctx.fillRect(HOLE.x - 30, HOLE.y - 2, 60, 12);
+  ctx.fillStyle = '#9a6a40'; ctx.fillRect(HOLE.x - 24, HOLE.y - 7, 48, 10);
+  ctx.fillStyle = '#b07c4c'; ctx.fillRect(HOLE.x - 16, HOLE.y - 11, 32, 6);
+  ctx.fillStyle = '#1a100a'; ctx.fillRect(HOLE.x - 12, HOLE.y - 5, 24, 10); ctx.fillRect(HOLE.x - 8, HOLE.y - 8, 16, 14);
+  pxBox(10, SLOT.y - 6, W - 20, SLOT.h + 12, PAD.panel);
+  for (let k = 0; k < 5; k++) pxBox(SLOT.x0 + k * (SLOT.w + SLOT.gap), SLOT.y, SLOT.w, SLOT.h, PAD.slot, PAD.slotLine);
+  pxBox(10, Q.y - 4, W - 20, H - Q.y - 4, PAD.panel);
+  for (let c = 0; c < 3; c++) {
+    const x = Q.x0 + c * (Q.colW + Q.gap);
+    pxBox(x, Q.y + 4, Q.colW, H - Q.y - 16, PAD.col, PAD.colLine);
+    ctx.fillStyle = PAD.front; ctx.fillRect(x + 4, Q.y + 8, Q.colW - 8, Q.rowH - 2);
+  }
+}
+// 쇠똥구리 집 (일터마다 하나, 쇠똥구리 색으로 물듦)
+function drawHome(k, color) {
+  const { x, y } = homePos(k);
+  const base = color ? (color === 'D' ? '#3e3a4c' : COLORS[color]) : '#b89870';
+  ctx.fillStyle = OUTLINE;
+  ctx.fillRect(x - 17, y - 2, 34, 12); ctx.fillRect(x - 13, y - 7, 26, 6); ctx.fillRect(x - 8, y - 10, 16, 4);
+  ctx.fillStyle = shade(base, -0.2); ctx.fillRect(x - 15, y, 30, 8);
+  ctx.fillStyle = base; ctx.fillRect(x - 11, y - 5, 22, 6); ctx.fillRect(x - 6, y - 8, 12, 4);
+  ctx.fillStyle = shade(base, 0.45); ctx.fillRect(x - 8, y - 4, 6, 2);
+  ctx.fillStyle = '#1a100a'; ctx.fillRect(x - 4, y + 1, 8, 7);
+}
+
+// ================== 화면: 메뉴 ==================
+function drawMenu() {
+  pxBox(30, 14, 360, 84, '#5a3a22');
+  text('데굴데굴 쇠똥구리', W / 2, 44, 28, '#ffe08a', 'center', OUTLINE);
+  text(`음식을 굴려서 굴로 쏙! · ${Math.min(cleared, BASE_COUNT)}/${BASE_COUNT} 클리어 · ${menuPage + 1}/${Math.ceil(BASE_COUNT / PER_PAGE)}쪽`, W / 2, 80, 12, "#ffffff");
+  drawSprite('beetleWalk' + (Math.floor(time * 6) % 2), 'R', 0, 2, 58, 52);
+  drawSprite('beetleWalk' + (Math.floor(time * 6 + 1) % 2), 'B', 0, 2, 362, 52, 1, true);
+  const ci = continueIdx();
+  const cl = `▶ ${cleared > 0 ? '이어하기' : '시작하기'} · ${ci + 1}. ${STAGES[ci].name}`;
+  button(30, 106, 244, 44, cl, () => chooseStage(ci), '#ffd34d', '#3a2412', fitSize(cl, 226, 16));
+  const mcol = mode === 'solo' ? '#f3e3c3' : mode === 'coop' ? '#9fe08a' : '#ffa8c4';
+  button(280, 106, 110, 44, MODE_LABEL[mode], cycleMode, mcol, '#3a2412', 14);
+
+  const cw = 116, ch = 136, gap = 14, x0 = (W - (3 * cw + 2 * gap)) / 2, y0 = 160;
+  const pages = Math.ceil(BASE_COUNT / PER_PAGE);
+  menuPage = Math.max(0, Math.min(pages - 1, menuPage));
+  STAGES.forEach((st, i) => {
+    if (i >= BASE_COUNT) return;
+    if (Math.floor(i / PER_PAGE) !== menuPage) return;
+    const j = i % PER_PAGE;
+    const cx = x0 + (j % 3) * (cw + gap), cy = y0 + Math.floor(j / 3) * (ch + 12);
+    const locked = i > cleared && !cheatAll;
+    const done = i < cleared;
+    pxBox(cx, cy + 4, cw, ch, OUTLINE);
+    pxBox(cx, cy, cw, ch, locked ? '#8d7b68' : '#fff6e0');
+    const tr = tierOf(i);   // 허들 스테이지 표시 (잠겨 있어도 미리 보임)
+    let tagAt = null;
+    if (tr && (st.tier === 'hard' || st.tier === 'boss')) {
+      const tag = st.tier === 'boss' ? '🔥 보스' : '⚠ 어려움';
+      tagAt = [cx, cy, tr.color, tag];   // 그림 위에 겹쳐 그리도록 카드 내용을 그린 뒤에 그림
+    }
+    if (!locked) {
+      drawThumb(i, cx + 12, cy + 10, cw - 24, 86);
+      const label = `${i + 1}. ${st.name}`;
+      text(label, cx + cw / 2, cy + 112, fitSize(label, cw - 10, 12), '#3a2412');
+      if (done) { pxBox(cx + cw - 26, cy + 4, 22, 22, '#5cc45a'); text('✓', cx + cw - 15, cy + 15, 12, '#fff'); }
+      btns.push({ x: cx, y: cy, w: cw, h: ch, fn: () => chooseStage(i), inst: null });
+    } else {
+      const lx = cx + cw / 2, ly = cy + 54;
+      ctx.fillStyle = '#5c4a38';
+      ctx.fillRect(lx - 10, ly - 22, 4, 14); ctx.fillRect(lx + 6, ly - 22, 4, 14); ctx.fillRect(lx - 10, ly - 24, 20, 4);
+      ctx.fillRect(lx - 16, ly - 8, 32, 26);
+      ctx.fillStyle = '#ffcf4a'; ctx.fillRect(lx - 3, ly, 6, 10);
+      text(`${i + 1}`, cx + cw / 2, cy + 108, 16, '#5c4a38');
+    }
+    if (tagAt) {
+      pxBox(cx - 4, cy - 6, 60, 20, tagAt[2], OUTLINE, 2);
+      text(tagAt[3], cx + 26, cy + 4, 11, '#3a2412');
+    }
+  });
+  button(78, H - 64, 120, 44, '게임 방법', () => { overlay = 'help'; }, '#7cc6f2', '#123a52', 16);
+  button(204, H - 64, 138, 44, '📷 내 사진으로', () => { if (mode !== 'solo') { mode = 'solo'; saveProgress(); toast('내 사진은 혼자 하기로 해요'); } pickPhoto(); }, '#ffb0d0', '#3a2412', 15);
+  if (menuPage > 0) button(18, H - 64, 52, 44, '◀', () => { menuPage--; }, '#f3e3c3', '#3a2412', 16);
+  if (menuPage < pages - 1) button(W - 70, H - 64, 52, 44, '▶', () => { menuPage++; }, '#f3e3c3', '#3a2412', 16);
+  if (!store.persistent) text('⚠ 이 화면에서는 저장이 안 돼요. 크롬·사파리 등 브라우저로 열어 주세요.', W / 2, 792, 11, '#ffb3a3');
+}
+function goMenu() {
+  if (net) { netSend({ t: 'bye' }); netClose(); }
+  screen = 'menu'; overlay = null; games = []; game = null; lobby = null;
+  menuPage = Math.floor(continueIdx() / PER_PAGE);
+}
+
+// ================== 화면: 플레이 ==================
+// 위아래로 움직이는 쇠똥구리의 얇은 그림자 (몸 아래쪽에 살짝 오른쪽으로 비켜서)
+function beetleShadow(x, y, sp) {
+  ctx.fillStyle = 'rgba(40,25,10,.24)';
+  ctx.beginPath();
+  ctx.ellipse(x + sp.lw * 0.12, y + sp.lh * 0.5 + 0.5, sp.lw * 0.34, Math.max(1, sp.lh * 0.06), 0, 0, PI * 2);
+  ctx.fill();
+}
+// 그림판 액자 선의 안쪽 경계 (drawPlayStatic 의 pxBox 테두리 4px 바로 안)
+const FRAME_IN = { x0: PIC.x - 2, y0: PIC.y - 4, x1: PIC.x + PIC.w + 2 };
+// 일꾼 쇠똥구리를 그릴 때 비켜 걷는 차선 오프셋 [dx, dy]
+//  - 평소: 진행 방향 오른쪽으로 비켜서 마주 오는 쇠똥구리와 겹치지 않음
+//  - 바깥 네모 길(위·왼쪽·오른쪽 변) 위: 방향과 상관없이 항상 그림 안쪽으로 비키고,
+//    쇠똥구리 몸이 액자 테두리 선에 닿지 않을 만큼 더 안쪽으로 (큰 그림·작은 그림 모두)
+function laneOffset(cr, BP) {
+  const ux = Math.cos(cr.ang), uy = Math.sin(cr.ang), vertical = Math.abs(uy) > Math.abs(ux);
+  const lane = Math.max(3, BP * 3), T = game.T;
+  let lx = -uy * lane, ly = ux * lane;
+  if (vertical) {
+    if (Math.abs(cr.x - T.x0) < 1) lx = lane; else if (Math.abs(cr.x - T.x1) < 1) lx = -lane;
+  } else {
+    if (Math.abs(cr.y - T.y0) < 1) ly = lane; else if (Math.abs(cr.y - T.y1) < 1) ly = -lane;
+  }
+  // 몸 전체가 액자 안쪽에 들어오게 밀어 넣음 (모서리에서 꺾을 때, 큰 쇠똥구리일 때도)
+  const sp = cr.state === 'go' ? getSprite(vertical ? 'beetle0' : 'beetleWalk0', cr.color, 0, BP) : null;
+  const hw = (sp ? sp.lw / 2 : ballR() * 1.6) + 1, hh = (sp ? sp.lh / 2 : ballR() * 1.6) + 1;
+  const x = cr.x + lx, y = cr.y + ly;
+  if (x - hw < FRAME_IN.x0) lx += FRAME_IN.x0 - (x - hw);
+  else if (x + hw > FRAME_IN.x1) lx -= (x + hw) - FRAME_IN.x1;
+  if (y - hh < FRAME_IN.y0) ly += FRAME_IN.y0 - (y - hh);
+  return [lx, ly];
+}
+function shakeOf(a) { return a.shake > 0 ? Math.round(Math.sin(a.shake * 60) * 5 * (a.shake / 0.4)) : 0; }
+function drawPlay() {
+  const g = game;
+  const on = online(), vs = mode === 'versus', host = on && net.role === 'host';
+  pxBox(8, 8, W - 16, 58, on ? shade(PCOL[g.player], -0.45) : '#4a3020');
+  button(16, 16, 44, 38, '◀', goMenu, '#f3e3c3', '#3a2412', 16);
+  // 배속: 협동은 방장이 정하고(손님이 누르면 방장에게 요청), 경쟁은 공정하게 고정
+  const speedFn = vs && on ? () => toast('대결 중엔 배속이 고정돼요') : on && !host ? () => netSend({ t: 'speed' }) : cycleSpeed;
+  button(on ? W - 76 : W - 132, 16, 58, 38, `${speed}배속`, speedFn, speed > 1 ? '#ffd34d' : '#f3e3c3', '#3a2412', 12);
+  if (!on) button(W - 68, 16, 52, 38, '다시', () => startStage(g.idx), '#f3e3c3', '#3a2412', 12);
+  const who = on ? (vs ? '대결 · ' : '협동 · ') : '';
+  const tierMark = STAGES[g.idx].tier === 'boss' ? '🔥' : STAGES[g.idx].tier === 'hard' ? '⚠' : '';
+  const title = who + tierMark + `${g.idx + 1}. ${STAGES[g.idx].name}`;
+  const tx = on ? (68 + W - 80) / 2 : (68 + W - 136) / 2;
+  text(title, tx, 25, fitSize(title, 196, 16), '#ffffff');
+  const pr = 1 - g.remaining / g.total;
+  if (vs && on) {
+    // 경쟁: 나(위)와 상대(아래) 진행 막대
+    const op = g.opp ? 1 - g.opp.rem / g.opp.total : 0;
+    for (const [y, p, c, label] of [[38, pr, '#ffd34d', '나'], [52, op, '#ff8fb0', '상대']]) {
+      text(label, tx - 104, y + 5, 10, '#ffffff', 'right');
+      pxBox(tx - 100, y, 200, 11, OUTLINE, OUTLINE, 1);
+      ctx.fillStyle = c; ctx.fillRect(tx - 98, y + 2, Math.round(196 * p), 7);
+    }
+  } else {
+    pxBox(tx - 102, 40, 204, 16, OUTLINE, OUTLINE, 2);
+    ctx.fillStyle = '#ffd34d'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 10);
+    ctx.fillStyle = '#fff3a0'; ctx.fillRect(tx - 99, 43, Math.round(198 * pr), 3);
+  }
+
+  ctx.drawImage(g.pic, g.gx, g.gy, g.C * g.cs, g.R * g.cs);
+  drawGimmicks(g);
+
+  // 아이템 도감 버튼 (그림판 왼쪽 아래 구석)
+  // 혼자 하기: 부스터 가방 / 경쟁: 숨은 아이템 도감
+  if (mode === 'solo') button(PIC.x + 2, PIC.y + PIC.h - 30, 78, 26, `🎒 부스터 ${boosterTotal()}`, () => openBag(null), '#bfe6ff', '#3a2412', 11);
+  else if (mode === 'versus') button(PIC.x + 2, PIC.y + PIC.h - 30, 70, 26, '? 아이템', () => openItems(null), '#bfe6ff', '#3a2412', 11);
+  if (g.aim === 'bomb') {
+    const blink = Math.floor(time * 4) % 2;
+    pxBox(W / 2 - 130, PIC.y + 4, 260, 30, blink ? '#ffb070' : '#ffd0a0', OUTLINE, 3);
+    text('💣 폭탄을 놓을 곳을 눌러요 (밖을 누르면 취소)', W / 2, PIC.y + 19, 12, '#3a2412');
+  }
+
+  // 아이템 효과 표시
+  let fy = PIC.y + 4;
+  for (const [f, it] of [['speed', ITEMS.speed], ['slow', ITEMS.slow]]) {
+    if (g.fx[f] <= 0) continue;
+    const label = `${it.icon} ${f === 'slow' ? '느려짐' : it.name.replace('!', '')} ${Math.ceil(g.fx[f])}`;
+    ctx.font = `12px ${FONT}`;
+    const w = ctx.measureText(label).width + 14;
+    pxBox(PIC.x, fy, w, 20, f === 'slow' ? '#ffd0dc' : it.color, OUTLINE, 2);
+    text(label, PIC.x + 7, fy + 10, 12, '#3a2412', 'left');
+    fy += 24;
+  }
+
+  for (let k = 0; k < 5; k++) {
+    if (g.locked[k]) {   // 잠긴 일터 (허들)
+      const sx = SLOT.x0 + k * (SLOT.w + SLOT.gap);
+      pxBox(sx, SLOT.y, SLOT.w, SLOT.h, '#8d7b68', '#5c4a38');
+      const lx = sx + SLOT.w / 2, ly = SLOT.y + SLOT.h / 2 + 4;
+      ctx.fillStyle = '#3a2a1c';
+      ctx.fillRect(lx - 8, ly - 16, 3, 10); ctx.fillRect(lx + 5, ly - 16, 3, 10); ctx.fillRect(lx - 8, ly - 18, 16, 3);
+      ctx.fillRect(lx - 12, ly - 7, 24, 18);
+      ctx.fillStyle = '#ffcf4a'; ctx.fillRect(lx - 2, ly - 2, 4, 8);
+      continue;
+    }
+    drawHome(k, g.slots[k] && g.slots[k].color);
+    if (g.slots[k]) continue;
+    const x = SLOT.x0 + k * (SLOT.w + SLOT.gap) + 8, y = SLOT.y + 8, w = SLOT.w - 16, h = SLOT.h - 16;
+    ctx.fillStyle = PAD.dash;
+    for (let t = 0; t < w; t += 8) { ctx.fillRect(x + t, y, 4, 3); ctx.fillRect(x + t, y + h - 3, 4, 3); }
+    for (let t = 0; t < h; t += 8) { ctx.fillRect(x, y + t, 3, 4); ctx.fillRect(x + w - 3, y + t, 3, 4); }
+  }
+
+  // 협동 모드: 누구 차례인지
+  if (mode === 'coop' && g.state === 'play') {
+    const c = PCOL[g.turn];
+    ctx.fillStyle = c; ctx.fillRect(10, Q.y - 6, W - 20, 4); ctx.fillRect(10, H - 10, W - 20, 4);
+    pxBox(W / 2 - 60, Q.y - 16, 120, 22, c, OUTLINE, 2);
+    const mine = g.turn === g.player;
+    text(mine ? '내 차례!' : '친구 차례…', W / 2, Q.y - 5, 14, '#ffffff', 'center', OUTLINE);
+  }
+
+  // 대기열
+  ctx.save();
+  ctx.beginPath(); ctx.rect(10, Q.y - 4, W - 20, H - Q.y - 4); ctx.clip();
+  const drawn = new Set();
+  g.queues.flat().forEach(a => {
+    if (!a.group || drawn.has(a.group)) return;
+    drawn.add(a.group);
+    const [p, q] = a.group.members.slice().sort((m, n) => m.col - n.col);
+    const x1 = p.x + shakeOf(p), y1 = p.y + 2, x2 = q.x + shakeOf(q), y2 = q.y + 2;
+    const len = Math.hypot(x2 - x1, y2 - y1), n = Math.max(2, Math.floor(len / 8));
+    for (let j = 1; j < n; j++) {
+      const t = j / n, x = Math.round(x1 + (x2 - x1) * t), y = Math.round(y1 + (y2 - y1) * t);
+      ctx.fillStyle = OUTLINE; ctx.fillRect(x - 4, y - 3, 8, 6);
+      ctx.fillStyle = j % 2 ? '#d8dde6' : '#9aa2b0'; ctx.fillRect(x - 3, y - 2, 6, 4);
+    }
+  });
+  g.queues.forEach(q => {
+    for (let i = q.length - 1; i >= 0; i--) {
+      const a = q[i];
+      if (a.y > H + 40) continue;
+      const x = a.x + shakeOf(a);
+      if (i === 0) {
+        const on = Math.floor(time * 3) % 2 === 0;
+        ctx.fillStyle = mode === 'coop' ? PCOL[g.turn] : (on ? '#e0a020' : '#c07a10');
+        const bx = Math.round(x - 26), by = Math.round(a.y - 24), bw = 52, bh = 48;
+        for (const [cx, cy, sx, sy] of [[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]]) {
+          ctx.fillRect(sx > 0 ? cx : cx - 10, sy > 0 ? cy : cy - 3, 10, 3);
+          ctx.fillRect(sx > 0 ? cx : cx - 3, sy > 0 ? cy : cy - 10, 3, 10);
+        }
+      }
+      drawSprite('beetle0', a.color, 0, CARD_PX, x, a.y, i === 0 ? 1 : 0.85);
+      text(String(a.total), x, a.y + 7, 14, '#ffffff', 'center', OUTLINE);
+    }
+  });
+  if (g.lockedCol >= 0) {   // ⛓ 잠긴 줄: 어둡게 + 쇠사슬 + 자물쇠
+    const x = Q.x0 + g.lockedCol * (Q.colW + Q.gap);
+    ctx.fillStyle = 'rgba(40,30,40,.45)'; ctx.fillRect(x + 3, Q.y + 7, Q.colW - 6, H - Q.y - 22);
+    for (let t = 0; t < 7; t++) {
+      const yy = Q.y + 20 + t * 22;
+      ctx.fillStyle = OUTLINE; ctx.fillRect(x + 6, yy - 3, Q.colW - 12, 7);
+      ctx.fillStyle = t % 2 ? '#d8dde6' : '#9aa2b0'; ctx.fillRect(x + 8, yy - 1, Q.colW - 16, 3);
+    }
+    const lx = x + Q.colW / 2, ly = Q.y + 46;
+    pxBox(lx - 22, ly - 10, 44, 34, '#ffcf4a', OUTLINE, 3);
+    ctx.fillStyle = OUTLINE; ctx.fillRect(lx - 13, ly - 24, 4, 16); ctx.fillRect(lx + 9, ly - 24, 4, 16); ctx.fillRect(lx - 13, ly - 26, 26, 4);
+    text('🔑', lx, ly + 7, 14, '#3a2412');
+  }
+  ctx.restore();
+
+  // 일터 쇠똥구리
+  g.slots.forEach(a => {
+    if (!a) return;
+    const fr = Math.floor(time * 6) % 2;
+    drawSprite('beetle' + fr, a.color, 0, CARD_PX, a.x + shakeOf(a), a.y);
+    text(String(a.total - a.dispatched), a.x, a.y + 7, 14, '#ffffff', 'center', OUTLINE);
+    if (mode === 'coop') {
+      pxBox(a.x - 34, a.y - 30, 22, 16, PCOL[a.owner], OUTLINE, 2);
+      text(`${a.owner + 1}P`, a.x - 23, a.y - 22, 10, '#ffffff');
+    }
+  });
+
+  // 일꾼 쇠똥구리
+  const BP = beetlePx(), r = ballR();
+  for (const cr of g.carriers) {
+    // 가지러 갈 때: 머리가 이동 방향을 바라봄
+    // 굴려 올 때: 진짜 쇠똥구리처럼 거꾸로(뒷걸음) 물구나무 서서 뒷다리로 음식을 밂
+    const fr = Math.floor(cr.walk * 8) % 2;
+    const ux = Math.cos(cr.ang), uy = Math.sin(cr.ang);
+    const vertical = Math.abs(uy) > Math.abs(ux);
+    const face = ux >= 0 ? 1 : -1, flip = face < 0;
+    const sv = uy < 0 ? -1 : 1;
+    // 차선: 진행 방향의 오른쪽으로 살짝 비켜 그려서, 마주 오는 쇠똥구리와 겹치지 않고 지나감
+    const [lx, ly] = laneOffset(cr, BP);
+    cr.x += lx; cr.y += ly;
+    ctx.fillStyle = 'rgba(40,25,10,.25)';
+    if (cr.state === 'go') {
+      if (vertical) {
+        beetleShadow(cr.x, cr.y, getSprite('beetle' + fr, cr.color, sv < 0 ? 0 : 2, BP));
+        drawSprite('beetle' + fr, cr.color, sv < 0 ? 0 : 2, BP, cr.x, cr.y);
+      } else {
+        const sp = getSprite('beetleWalk' + fr, cr.color, 0, BP, flip);
+        ctx.beginPath(); ctx.ellipse(cr.x, cr.y + sp.lh / 2, sp.lw * 0.45, 1.5, 0, 0, PI * 2); ctx.fill();
+        drawSprite('beetleWalk' + fr, cr.color, 0, BP, cr.x, cr.y, 1, flip);
+      }
+    } else {
+      const turn = (vertical ? sv : face) * cr.roll / r;
+      if (vertical) {
+        // 위아래로 굴릴 때: 공을 먼저 그리고 쇠똥구리를 위에 겹쳐서, 몸이 공 가장자리를 살짝 가리게
+        const sp = getSprite('beetle' + fr, cr.color, sv < 0 ? 2 : 0, BP);
+        ctx.fillStyle = 'rgba(40,25,10,.25)';
+        ctx.beginPath(); ctx.ellipse(cr.x, cr.y + r * 0.85, r, 1.5, 0, 0, PI * 2); ctx.fill();
+        drawFoodBall(cr.x, cr.y, r, cr.color, turn);
+        const overlap = r * 0.5;   // 공 지름의 약 1/4을 몸이 가림
+        const by = cr.y - sv * (r + sp.lh / 2 - overlap);
+        beetleShadow(cr.x, by, sp);
+        drawSprite('beetle' + fr, cr.color, sv < 0 ? 2 : 0, BP, cr.x, by);
+      } else {
+        const ground = cr.y + r;
+        const sp = getSprite('beetlePush' + fr, cr.color, 0, BP, flip);
+        const bx = cr.x - face * (r * 0.85 + sp.lw / 2 - 1);
+        ctx.beginPath(); ctx.ellipse(cr.x - face * sp.lw * 0.5, ground, r + sp.lw * 0.6, 1.5, 0, 0, PI * 2); ctx.fill();
+        drawSprite('beetlePush' + fr, cr.color, 0, BP, bx, ground - sp.lh / 2, 1, flip);
+        drawFoodBall(cr.x, cr.y, r, cr.color, turn);
+      }
+      if (cr.item && Math.floor(time * 8) % 2) pxStar(cr.x + r, cr.y - r, 1, '#fff6a0');   // 아이템 든 음식은 반짝
+    }
+    cr.x -= lx; cr.y -= ly;
+  }
+  for (const p of g.particles) {
+    ctx.globalAlpha = Math.min(1, p.life * 2);
+    ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // 아이템을 집은 자리: 퍼지는 도트 고리 + 떠오르는 이름
+  for (const p of g.pops) {
+    const k = Math.min(1, p.t / 0.5);
+    ctx.globalAlpha = Math.max(0, 1 - p.t / 1.4);
+    ctx.fillStyle = p.color;
+    const rr = 6 + k * 26;
+    for (let a = 0; a < 16; a++) {
+      const x = p.x + Math.cos(a * PI / 8) * rr, y = p.y + Math.sin(a * PI / 8) * rr;
+      ctx.fillRect(Math.round(x) - 2, Math.round(y) - 2, 4, 4);
+    }
+    const ly = p.y - 14 - p.t * 26;
+    ctx.font = `14px ${FONT}`;
+    const w = ctx.measureText(p.text).width + 12;
+    pxBox(p.x - w / 2, ly - 11, w, 22, p.color, OUTLINE, 2);
+    text(p.text, p.x, ly, 14, '#3a2412');
+    ctx.globalAlpha = 1;
+  }
+
+  // 아이템 발동 배너
+  if (g.banner) {
+    // 그림 위쪽에 작게 (아이템이 나온 자리를 가리지 않게)
+    const b = g.banner, k = Math.min(1, (1.6 - b.t) / 0.2);
+    const size = Math.round(18 * (0.6 + 0.4 * easeBack(k)));
+    ctx.globalAlpha = Math.min(1, b.t * 3);
+    pxBox(W / 2 - 120, PIC.y + 2, 240, 46, b.color, OUTLINE, 3);
+    text(b.text, W / 2, PIC.y + 17, size, '#3a2412');
+    text(b.sub, W / 2, PIC.y + 36, 11, '#3a2412');
+    ctx.globalAlpha = 1;
+  }
+  // 이 화면의 안내 문구
+  if (g.toast) {
+    ctx.font = `14px ${FONT}`;
+    const w = Math.min(W - 30, ctx.measureText(g.toast.text).width + 36);
+    ctx.globalAlpha = Math.min(1, g.toast.t * 3);
+    pxBox(W / 2 - w / 2, 448, w, 40, '#2a1a10', OUTLINE, 3);
+    text(g.toast.text, W / 2, 468, 14, '#ffffff');
+    ctx.globalAlpha = 1;
+  }
+}
+
+// 그림 위 기믹: 🧊 얼음 덮개, 🔑 열쇠, 🎁 선물 (반짝임)
+function drawGimmicks(g) {
+  const cs = g.cs, u = Math.max(1, Math.round(cs / 8));
+  // 🧊 얼음: 하늘색 덮개 + 진한 파란 테두리 + 하얀 반짝임 (흰 음식과도 구분되게)
+  for (const k of g.ice) {
+    const r = Math.floor(k / g.C), c = k % g.C, x = g.gx + c * cs, y = g.gy + r * cs;
+    ctx.fillStyle = 'rgba(120,205,255,.78)'; ctx.fillRect(x, y, cs, cs);
+    ctx.strokeStyle = '#2f7fc0'; ctx.lineWidth = Math.max(1, u); ctx.strokeRect(x + u / 2, y + u / 2, cs - u, cs - u);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + u * 2, y + u * 2, Math.max(u, cs * 0.35), u); ctx.fillRect(x + u * 2, y + u * 2, u, Math.max(u, cs * 0.35));
+    ctx.fillRect(x + cs * 0.6, y + cs * 0.6, u, u);
+  }
+  // 🔑 · 🎁: 칸보다 크게, 출렁이는 빛 고리로 눈에 띄게
+  const icon = (k, ch, glow, ring) => {
+    const r = Math.floor(k / g.C), c = k % g.C, x = g.gx + c * cs + cs / 2, y = g.gy + r * cs + cs / 2;
+    const s = Math.max(17, cs * 1.5), bob = Math.round(Math.sin(time * 4 + k) * 1.5);
+    const pulse = 0.5 + 0.5 * Math.sin(time * 5 + k);
+    ctx.fillStyle = ring; ctx.globalAlpha = 0.35 + 0.35 * pulse;
+    ctx.beginPath(); ctx.arc(x, y + bob, s * (0.7 + 0.18 * pulse), 0, PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = OUTLINE; ctx.beginPath(); ctx.arc(x, y + bob, s * 0.6, 0, PI * 2); ctx.fill();
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y + bob, s * 0.6 - 2, 0, PI * 2); ctx.fill();
+    text(ch, x, y + bob + 1, Math.round(s * 0.8), '#3a2412');
+    if (Math.floor(time * 3 + k) % 3 === 0) pxStar(x + s * 0.55, y - s * 0.5 + bob, 1, '#ffffff');
+  };
+  for (const k of g.keys) icon(k, '🔑', '#ffe680', '#fff3a0');
+  for (const k of g.gifts) icon(k, '🎁', '#ffc8e0', '#ffe0f0');
+}
+// (한 화면 나누기는 없어지고 각자 폰에서 하므로 좌표 변환 없음)
+function viewTransform(i) {}
+function toLocal(i, x, y) { return { x, y }; }
+
+// ================== 오버레이 ==================
+function panel(y, h) {
+  ctx.fillStyle = 'rgba(20,12,5,.6)'; ctx.fillRect(0, 0, W, H);
+  pxBox(28, y + 6, W - 56, h, OUTLINE, OUTLINE, 4);
+  pxBox(28, y, W - 56, h, '#fff6e0', OUTLINE, 4);
+}
+const easeBack = t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+function drawRays(cx, cy, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.translate(cx, cy); ctx.rotate(time * 0.3);
+  ctx.fillStyle = '#ffe9a0';
+  for (let k = 0; k < 12; k++) { ctx.rotate(PI / 6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-30, -500); ctx.lineTo(30, -500); ctx.fill(); }
+  ctx.restore();
+}
+function drawConfetti() {
+  for (const p of confetti) {
+    if (p.y < 0) continue;
+    ctx.fillStyle = p.c;
+    ctx.fillRect(Math.round(p.x + Math.sin(p.sw) * 8), Math.round(p.y), p.s, Math.max(2, Math.round(p.s * Math.abs(Math.cos(p.sw)))));
+  }
+}
+function drawClear() {
+  const t = clearT, g = game;
+  const last = g.idx === BASE_COUNT - 1, custom = g.idx >= BASE_COUNT;
+  ctx.fillStyle = `rgba(30,18,40,${Math.min(0.85, t * 1.6)})`; ctx.fillRect(0, 0, W, H);
+  if (t > 0.2) drawRays(W / 2, 330, Math.min(0.25, (t - 0.2) * 0.5));
+  // 완성 그림 대신: 신난 쇠똥구리가 음식 공을 굴리며 축하 (반짝이 별이 둘레에서 깜빡)
+  const k = Math.min(1, t / 0.6), e = easeBack(k);
+  const bx = W / 2, byy = 340 - 30 * e;
+  const fr = Math.floor(time * 8) % 2;
+  ctx.globalAlpha = Math.min(1, k * 1.5);
+  drawFoodBall(bx + 22, byy + 6, 16, 'R', time * 4);
+  drawSprite('beetlePush' + fr, 'Y', 0, 4, bx - 26, byy, Math.min(1, k * 1.5));
+  ctx.globalAlpha = 1;
+  if (t > 0.5) for (let i = 0; i < 8; i++) {
+    const a = i / 8 * PI * 2 + 0.3;
+    const tw = Math.sin(time * 6 + i * 1.7);
+    if (tw > -0.2) pxStar(bx + Math.cos(a) * 110, byy + Math.sin(a) * 80, tw > 0.5 ? 3 : 2, i % 2 ? '#fff6a0' : '#ffffff');
+  }
+  drawConfetti();
+  if (t > 0.6) {
+    const bt = Math.min(1, (t - 0.6) / 0.4);
+    const size = Math.round(28 * (0.6 + 0.4 * easeBack(bt)));
+    text(custom ? '내 사진 완성!' : last ? '모든 스테이지 클리어!' : '냠냠! 클리어!', W / 2, 446, size, '#ffe08a', 'center', OUTLINE);
+    const sub = mode === 'coop' ? `팀워크 최고! 방장 ${g.score[0]}개 · 친구 ${g.score[1]}개` : `'${STAGES[g.idx].name}' 을(를) 다 먹었어요`;
+    text(sub, W / 2, lastGift ? 474 : 484, 14, '#ffffff', 'center', OUTLINE);
+    if (lastGift) { const gt = '🎁 선물: ' + lastGift.join(', '); text(gt, W / 2, 498, fitSize(gt, W - 40, 15, 10), '#ffe08a', 'center', OUTLINE); }
+  }
+  if (t > 1.0) {
+    if (online()) {
+      if (net.role === 'host' && !last) button(W / 2 - 100, 516, 200, 54, '다음 스테이지 ▶', () => netStartGame(g.idx + 1));
+      else if (net.role !== 'host') text('방장이 다음 스테이지를 고르는 중…', W / 2, 540, 14, '#ffe7a3', 'center', OUTLINE);
+      button(W / 2 - 70, 586, 140, 44, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
+    } else {
+      if (custom) button(W / 2 - 100, 516, 200, 54, '📷 다른 사진으로', pickPhoto, '#ffb0d0');
+      else if (!last) button(W / 2 - 100, 516, 200, 54, '다음 스테이지 ▶', () => startStage(g.idx + 1));
+      button(W / 2 - 70, last ? 524 : 586, 140, 44, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    }
+  }
+}
+// 경쟁 결과 (내 폰 기준)
+function drawVsEnd() {
+  const t = clearT, win = vsWin;
+  ctx.fillStyle = `rgba(30,18,40,${Math.min(0.75, t * 1.6)})`; ctx.fillRect(0, 0, W, H);
+  if (win) { drawRays(W / 2, 300, Math.min(0.25, t * 0.5)); drawConfetti(); }
+  const k = Math.min(1, t / 0.5);
+  pxBox(50, 220, W - 100, 180, OUTLINE, OUTLINE, 4);
+  pxBox(50, 214, W - 100, 180, win ? '#ffe08a' : '#d8d0c4', OUTLINE, 4);
+  text(win ? '승리!' : '아쉬워요', W / 2, 262, Math.round(36 * (0.6 + 0.4 * easeBack(k))), win ? '#c2561b' : '#5c4a38');
+  text(vsNote || (win ? '먼저 다 먹었어요' : '상대가 먼저 다 먹었어요'), W / 2, 306, 14, '#3a2412');
+  drawSprite('beetlePush' + (Math.floor(time * 6) % 2), win ? 'Y' : 'A', 0, 3, W / 2 - 16, 356);
+  drawFoodBall(W / 2 + 14, 360, 9, win ? 'R' : 'A', time * 3);
+  if (t > 0.8) {
+    if (online() && net.role === 'host') button(W / 2 - 90, 420, 180, 50, '다시 대결', () => netStartGame(game.idx), '#ffd34d');
+    else if (online()) text('방장이 다시 시작할 수 있어요', W / 2, 444, 14, '#ffe7a3', 'center', OUTLINE);
+    button(W / 2 - 70, 484, 140, 44, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
+  }
+}
+// 온라인 방 (로비)
+function drawLobby() {
+  panel(150, 470);
+  text(MODE_LABEL[mode], W / 2, 186, 24, '#3a2412');
+  const name = `${lobby.stage + 1}. ${STAGES[lobby.stage].name}`;
+  text(`방장이 되면 '${name}' 으로 시작해요`, W / 2, 216, fitSize(`방장이 되면 '${name}' 으로 시작해요`, 330, 13), '#5c4a38');
+  button(70, 240, 280, 52, '⚡ 빠른 매칭 (들어온 순서대로)', quickMatch, '#ffd34d', '#3a2412', 15);
+  button(70, 304, 280, 46, '🏠 방 만들기 (번호 받기)', createRoom, '#9fe08a', '#3a2412', 15);
+  button(70, 362, 280, 46, '🔑 방 번호로 들어가기', joinRoom, '#bfe6ff', '#3a2412', 15);
+  // 상태 안내 (기다리는 중이면 점이 움직임)
+  const busy = net && !online();
+  const dots = busy ? '.'.repeat(1 + Math.floor(time * 2) % 3) : '';
+  const lines = wrapText(lobby.status + dots, 300, 14);
+  lines.forEach((l, i) => text(l, W / 2, 438 + i * 22, 14, '#3a2412'));
+  if (net && net.code && !online()) text(net.code, W / 2, 512, 40, '#c2561b', 'center', OUTLINE);
+  button(W / 2 - 60, 556, 120, 44, '취소', () => { netClose(); lobby = null; overlay = null; }, '#e8dcc4', '#3a2412', 16);
+}
+function wrapText(t, maxW, size) {
+  ctx.font = `${size}px ${FONT}`;
+  const out = []; let line = '';
+  for (const ch of t) {
+    if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ''; }
+    line += ch;
+  }
+  if (line) out.push(line);
+  return out.slice(0, 3);
+}
+function drawOverlay() {
+  if (overlay === 'help') {
+    panel(90, 610);
+    text('게임 방법', W / 2, 126, 24, '#3a2412');
+    const lines = [
+      ['b', '위 그림은 네모난 음식 조각이에요.'],
+      ['a', '아래 3줄의 맨 위 쇠똥구리를 눌러'],
+      ['', '일터(5칸)로 보내요.'],
+      ['c', '숫자만큼 일꾼이 집에서 나와 그림판'],
+      ['', '가장자리를 돌다 빈 길로 꺾어 들어가'],
+      ['', '같은 색 음식을 가져와요.'],
+      ['', '집은 음식은 동그랗게 굴려서 굴로 쏙!'],
+      ['l', '사슬로 묶인 둘은 함께 맨 위에 있어야 해요.'],
+      ['i', '🎒 부스터: 클리어 선물로 모아 막힐 때 써요'],
+      ['m', '모드 버튼: 혼자 / 협동 온라인 / 경쟁 온라인'],
+      ['', '협동: 각자 폰으로 한 그림을 번갈아 골라요'],
+      ['', '경쟁: 각자 폰으로 같은 그림 먼저 먹기 대결'],
+      ['p', '📷 내 사진으로: 사진을 도트 음식으로 바꿔서 플레이'],
+      ['s', '배속 버튼: 1·2·3·5·9배속'],
+      ['x', '일터가 꽉 막히면 실패! ⚠🔥 허들엔 🔑🧊⛓🎁 기믹'],
+      ['o', '음식을 다 옮기면 클리어!'],
+    ];
+    lines.forEach(([ic, t], i) => {
+      const y = 162 + i * 29;
+      if (ic === 'a') drawSprite('beetle0', 'R', 0, 1.4, 62, y);
+      else if (ic === 'c') drawSprite('beetleWalk0', 'B', 0, 1.6, 62, y);
+      else if (ic === 'b') paintSquare(ctx, 54, y - 8, 16, 16, 'Y');
+      else if (ic === 'l') { ctx.fillStyle = '#9aa2b0'; ctx.fillRect(52, y - 2, 20, 4); }
+      else if (ic === 'i') text('⚡', 62, y, 16, '#d08a20');
+      else if (ic === 'm') text('👥', 62, y, 14, '#3a2412');
+      else if (ic === 'p') { paintBead(ctx, 54, y - 8, 16, 'K'); }
+      else if (ic === 's') text('»', 62, y, 16, '#d08a20');
+      else if (ic === 'x') text('✕', 62, y, 16, '#d0453a');
+      else if (ic === 'o') text('★', 62, y, 16, '#e0a020');
+      text(t, 84, y, fitSize(t, 300, 14, 10), '#3a2412', 'left');
+    });
+    button(W / 2 - 170, 640, 160, 46, '⚡ 아이템 보기', () => openItems('help'), '#bfe6ff', '#3a2412', 15);
+    button(W / 2 + 10, 640, 160, 46, '알겠어요!', () => { overlay = null; });
+  } else if (overlay === 'items') {
+    drawItems();
+  } else if (overlay === 'intro') {
+    drawIntro();
+  } else if (overlay === 'bag') {
+    drawBag();
+  } else if (overlay === 'clear') {
+    drawClear();
+  } else if (overlay === 'vsEnd') {
+    drawVsEnd();
+  } else if (overlay === 'lobby') {
+    drawLobby();
+  } else if (overlay === 'fail') {
+    panel(220, 340);
+    text('쇠똥구리들이 꼼짝 못 해요!', W / 2, 266, 20, '#b33a2a');
+    text('일터가 꽉 차서 더 옮길 수 없어요.', W / 2, 300, 14, '#3a2412');
+    drawSprite('beetle' + (Math.floor(time * 4) % 2), 'R', 0, 3, W / 2, 352);
+    if (online()) {
+      if (net.role === 'host') button(W / 2 - 80, 400, 160, 50, '다시 하기', () => netStartGame(game.idx));
+      else text('방장이 다시 시작할 수 있어요', W / 2, 424, 14, '#5c4a38');
+      button(W / 2 - 70, 462, 140, 42, '나가기', leaveOnline, '#e8dcc4', '#3a2412', 16);
+    } else {
+      // 혼자 하기: 아껴 둔 부스터로 이어하기
+      const opts = mode === 'solo' ? (BAL.boosterOrder || []).filter(k => !boosterBlock(k)) : [];
+      if (opts.length) {
+        text('🎒 아껴 둔 부스터로 이어할까요?', W / 2, 384, 13, '#3a2412');
+        const bw = Math.min(150, (W - 90) / opts.length - 6), x0 = W / 2 - (opts.length * (bw + 6) - 6) / 2;
+        opts.forEach((k, i) => { const B = BAL.boosters[k]; const l = `${B.icon} ${B.name} ${inventory[k]}`; button(x0 + i * (bw + 6), 398, bw, 40, l, () => useBooster(k), B.color, '#3a2412', fitSize(l, bw - 8, 13, 9)); });
+      }
+      const oy = opts.length ? 450 : 400;
+      button(W / 2 - 80, oy, 160, 46, '다시 하기', () => startStage(game.idx));
+      button(W / 2 - 70, oy + 56, 140, 40, '목록으로', goMenu, '#e8dcc4', '#3a2412', 16);
+    }
+  }
+}
+
+function drawToast() {
+  if (!toastMsg) return;
+  ctx.font = `14px ${FONT}`;
+  const w = Math.min(W - 30, ctx.measureText(toastMsg.text).width + 36);
+  ctx.globalAlpha = Math.min(1, toastMsg.t * 3);
+  pxBox(W / 2 - w / 2, 448, w, 40, '#2a1a10', OUTLINE, 3);
+  text(toastMsg.text, W / 2, 468, 14, '#ffffff');
+  ctx.globalAlpha = 1;
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  cvs.style.width = (W * s) + 'px';
+  cvs.style.height = (H * s) + 'px';
+  cvs.width = Math.round(W * s * dpr);
+  cvs.height = Math.round(H * s * dpr);
+  RES = s * dpr;
+  mainCtx.setTransform(RES, 0, 0, RES, 0, 0);
+  mainCtx.imageSmoothingEnabled = false;
+  spriteCache.clear(); thumbCache.clear(); hiresCache.clear(); beadCache.clear(); squareCache.clear(); layers = {};
+  const cur = game;
+  for (const gm of games) { game = gm; buildPicCache(); }
+  game = cur;
+}
+window.addEventListener('resize', resize);
+
+// ================== 치트: 모든 그림 열기 ==================
+// 확인용. 저장된 진행도는 그대로 두고, 이번 실행 동안만 메뉴의 잠긴 스테이지를 모두 엶 (다시 하면 꺼짐)
+//  PC: 키보드로 o-p-e-n 입력
+//  폰: 메뉴 제목을 2초 안에 5번 톡톡 → 뜨는 입력창(폰 키보드)에 open 입력
+let cheatAll = false, cheatKeys = '', cheatTaps = [], cheatAsk = false;
+function askCheatCode() {
+  const code = window.prompt('치트 코드를 입력하세요');
+  if (code == null) return;
+  if (code.trim().toLowerCase() === 'open') toggleCheatAll();
+  else { toast('코드가 틀렸어요'); beep(160, 0.1, 0.03); }
+}
+function toggleCheatAll() {
+  cheatAll = !cheatAll;
+  toast(cheatAll ? '🔓 치트: 모든 그림 열림' : '🔒 치트 꺼짐');
+  beep(cheatAll ? 880 : 330, 0.12, 0.04);
+}
+window.addEventListener('keydown', e => {
+  if (e.key.length !== 1) return;
+  cheatKeys = (cheatKeys + e.key.toLowerCase()).slice(-4);
+  if (cheatKeys === 'open') { cheatKeys = ''; toggleCheatAll(); }
+});
+
+// ================== 입력 ==================
+function toScreen(e) {
+  const r = cvs.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+// 사진 고르기 창은 click 이벤트 안에서 열어야 모바일(특히 아이폰)에서도 열림
+cvs.addEventListener('click', () => {
+  if (cheatAsk) { cheatAsk = false; askCheatCode(); return; }   // 입력창(폰 키보드)도 click 안에서 열어야 잘 뜸
+  if (!photoWanted) return;
+  photoWanted = false;
+  photoInput.click();
+});
+cvs.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  userTapped = true;
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) {} }
+  else if (ac.state === 'suspended') ac.resume();
+  const s = toScreen(e);
+  if (screen === 'menu' && !overlay && s.x >= 30 && s.x <= 390 && s.y >= 14 && s.y <= 98) {   // 제목 5번 톡톡 = 치트 코드 입력창
+    const now = performance.now();
+    cheatTaps = cheatTaps.filter(t => now - t < 2000); cheatTaps.push(now);
+    if (cheatTaps.length >= 5) { cheatTaps = []; cheatAsk = true; }
+    return;
+  }
+  for (let i = btns.length - 1; i >= 0; i--) {
+    const b = btns[i];
+    if (s.x >= b.x && s.x <= b.x + b.w && s.y >= b.y && s.y <= b.y + b.h + 4) { beep(660, 0.05, 0.03); b.fn(); return; }
+  }
+  if (overlay || screen !== 'play' || !games.length) return;
+  game = games[0];
+  if (!game || game.state !== 'play') return;
+  if (game.aim === 'bomb') { placeBomb(s.x, s.y); return; }
+  for (let c = 0; c < 3; c++) {
+    const q = game.queues[c];
+    for (let i = 0; i < q.length; i++) {
+      const a = q[i];
+      if (Math.abs(s.x - a.x) < Q.colW / 2 && Math.abs(s.y - a.y) < Q.rowH / 2) {
+        if (mode === 'coop' && online()) {
+          if (game.turn !== game.player) { toast('지금은 친구 차례예요'); beep(160, 0.1, 0.03); return; }
+          if (i > 0) { a.shake = 0.4; toast('맨 위에 있는 쇠똥구리만 고를 수 있어요'); return; }
+          if (net.role === 'guest') { netSend({ t: 'pick', c }); beep(520, 0.06, 0.03); return; }   // 방장에게 부탁
+        }
+        tryPick(c, i);
+        return;
+      }
+    }
+  }
+});
+
+// ================== 루프 ==================
+resize();
+if (document.fonts && document.fonts.load) document.fonts.load(`16px DungGeunMo`).catch(() => {});
+let last = performance.now();
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));   // 첫 프레임 시각이 시작보다 이를 수 있어서 음수 방지
+  last = now;
+  update(dt);
+  btns = [];
+  ctx.setTransform(RES, 0, 0, RES, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (screen === 'menu') {
+    curInst = null;
+    ctx.drawImage(layer('ground', drawGround), 0, 0, W, H);
+    drawMenu();
+  } else {
+    game = games[0]; curInst = null;
+    ctx.drawImage(layer('play', drawPlayStatic), 0, 0, W, H);
+    drawPlay();
+  }
+  if (overlay) btns = [];
+  drawToast();
+  drawOverlay();
+  requestAnimationFrame(frame);
+}
+goMenu();
+requestAnimationFrame(frame);
+</script>
+<!-- QA 도구 (밸런스 시뮬레이터 · 기능 자동 점검). 게임 진행에는 영향 없음 -->
+<script src="balance/balance-qa.js"></script>
+<script src="qa/functional-qa.js"></script>
+</body>
+</html>
