@@ -33,7 +33,7 @@
 
 ## 3-1. `gimmicks` / `gimmickRules` — 기믹 (허들의 재미 요소)
 `gimmicks.<키>` 는 소개 창·안내에 쓰는 정의: `icon`, `name`, `color`, `desc[2줄]`, `tip`. (`gift.rewards` = 선물로 나올 수 있는 부스터 목록)
-코드가 아는 키: `key`(🔑), `ice`(🧊), `colLock`(⛓), `gift`(🎁). 첫 등장 스테이지는 규칙에서 자동 계산해서 소개 창을 띄움.
+코드가 아는 키: `chain`(🔗, 스테이지에 사슬이 있으면 자동), `key`(🔑), `ice`(🧊), `colLock`(⛓), `gift`(🎁). 첫 등장 스테이지는 규칙에서 자동 계산해서 소개 창을 띄움.
 
 `gimmickRules`: `{ when: 'JS 식 (n)', set: {...} }` — **맞는 규칙을 모두** 위에서부터 합침 (아래가 덮어씀). 결과는 `stages[n].gimmicks` 로 다시 덮어쓸 수 있음.
 | `set` 키 | 형태 | 뜻 |
@@ -48,6 +48,23 @@
 `tier`, `slots`, `link`, `jitter`, `jitterSpan`, `ants`, `seed`, `reward`, `gimmicks` 중 필요한 것만.
 - `seed`: 쇠똥구리 순서 난수 번호. **QA가 목표 구간에 맞는 값을 골라 고정.**
 - `reward`: `{ 부스터키: 개수 }` — 처음 클리어 선물 (규칙보다 우선)
+
+레슨 스테이지(장 단위 레벨 디자인, GDD 5장)용 키:
+| 키 | 형태 | 뜻 |
+|---|---|---|
+| `lesson` | 문자열 | 이 판에서 배울 것 (기획·QA 표시용) |
+| `title`, `intro` | 문자열 | 시작 배너 제목·한 줄 ("무엇을 보면 되는지"만, 정답은 말하지 않음) |
+| `hint` | 문자열 | 막혔을 때 실패 화면에 보이는 💡 요령 (2줄 이내) |
+| `gen.pull` / `gen.pullSpan` | 확률 / 칸 | 아무 쇠똥구리나 앞으로 당김 → 맨 위에 "지금 못 먹는 색"이 옴 |
+| `gen.trap` / `gen.trapSpan` | 확률 / 칸 | 숫자가 (생길 때) 닿는 음식보다 큰 쇠똥구리만 앞으로 당김 → 숫자 함정 |
+| `gen.safeTop` | true | 시작할 때 맨 위 3마리는 당기지 않음 (첫 수부터 희생 강요 X) |
+| `gen.busy` | 정수 | 순서를 만들 때 동시에 일하는 칸 수 (기본 min(3, 칸-1)) |
+| `gen.big` | 배수 | 쇠똥구리 숫자 상한 = 닿는 음식 × big (기본 2.5) |
+| `gen.skew` / `gen.skewMax` | 개수 / 칸 | 엇갈린 사슬: 이웃 줄의 다른 높이 두 마리를 묶음 (X자 교차는 피함, 풀 수 있는지는 솔버가 확인) |
+| `qa.engine` | `{<전략>Fail: [최소, 최대], …}` | **실제 엔진** 자동 플레이 실패율 목표 — 기능 QA `testLessons` 가 적힌 전략만 잼. 전략: random, greedy, full, chainWait, chainFree, chain (GDD 5.C) |
+| `qa.randomFail` 등 | `[최소, 최대]` | (선택) 시뮬 기준 목표. 레슨 스테이지는 시뮬이 엔진보다 가혹해서 엔진 목표를 기준으로 씀 |
+
+검증 도구: `BalanceQA.evaluate(i)` → `fullFail`, `solvable`(솔버), `solution`(정답 수순) · `FunctionalQA.lessonStat(i, n)` → 실제 엔진 random/greedy/full 실패율.
 
 ## 5. `boosters` / `boosterOrder` / `startInventory` / `maxPerBooster`
 | 키 | 뜻 |

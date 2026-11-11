@@ -41,10 +41,12 @@
       let badLink = 0;
       d.cols.forEach((col, c) => col.forEach((a, r) => {
         if (!a.group) return;
-        const ok = a.group.members.length === 2 && a.group.members.every(m => d.cols.some((cc, ci) => cc[r] === m && Math.abs(ci - c) <= 1));
+        // 같은 높이 이웃, 또는 레슨용 엇갈린 사슬(gen.skew)이면 이웃 줄의 다른 높이도 허용
+        const skew = STAGES[i].gen && STAGES[i].gen.skew;
+        const ok = a.group.members.length === 2 && a.group.members.every(m => d.cols.some((cc, ci) => Math.abs(ci - c) <= 1 && (skew ? cc.includes(m) : cc[r] === m)));
         if (!ok) badLink++;
       }));
-      check(`스테이지 ${i + 1} 사슬은 같은 줄 이웃끼리`, !badLink, badLink);
+      check(`스테이지 ${i + 1} 사슬은 이웃 줄끼리`, !badLink, badLink);
       const s = BalanceQA.evaluate(i, { random: 4, greedy: 8, smart: 60 });
       check(`스테이지 ${i + 1} 풀 수 있음 (QA 시뮬)`, s.solvable, JSON.stringify(s));
     }
@@ -228,6 +230,97 @@
     check('부스터 최대 개수 제한', inventory.undo <= (BAL.maxPerBooster || 9), inventory.undo);
   }
 
+  // ---- 4-2. 레슨 검증 (실제 엔진): "함정 전략은 막히고, 레슨대로 하면 풀린다" ----
+  //  stages[n].qa.engine = { randomFail, greedyFail, fullFail } 구간을 실제 엔진 자동 플레이로 확인
+  //  정책  random: 빈 칸이 생기면 곧 아무거나 / greedy: 닿는 색이면 바로 / full: 숫자까지 보고, 모자라면 기다림 (1장 전부)
+  //        chain: full + 사슬을 위해 칸 2개 비워 두기 + 사슬 짝을 가린 줄 먼저 꺼내기 (2장 전부)
+  function lessonRun(i, policy, seed) {
+    const rng = mulberry32(seed), keep = { speed, mode };
+    mode = 'solo'; speed = 9;
+    startStage(i); overlay = null;
+    const g = game;
+    const reachN = color => {
+      let n = 0;
+      for (const k of g.reach.acc.keys()) { const r = Math.floor(k / g.C), c = k % g.C; if (g.grid[r][c] === color && !g.reserved[r][c] && !g.ice.has(k)) n++; }
+      return n;
+    };
+    const pick = () => {
+      if (g.state !== 'play' || !freeSlots().length) return;
+      const free = freeSlots().length, legal = [];
+      for (let c = 0; c < 3; c++) {
+        const a = g.queues[c][0];
+        if (!a || c === g.lockedCol) continue;
+        const ms = a.group ? a.group.members : [a];
+        if (ms.every(m => g.queues[m.col][0] === m) && free >= ms.length) legal.push({ c, ms });
+      }
+      if (!legal.length) return;
+      const any = arr => arr[Math.floor(rng() * arr.length)];
+      const working = g.slots.some(a => a && hasTarget(a.color)) || g.carriers.length > 0;
+      if (policy === 'random') { if (rng() < 0.3) tryPick(any(legal).c, 0); return; }
+      if (policy === 'greedy') {
+        const good = legal.filter(o => o.ms.every(m => hasTarget(m.color)));
+        if (good.length) tryPick(any(good).c, 0); else if (!working) tryPick(any(legal).c, 0);
+        return;
+      }
+      const fill = a => { const busy = g.slots.filter(s => s && s.color === a.color).reduce((t, s) => t + s.total - s.dispatched, 0); return (reachN(a.color) - busy) / a.total; };
+      const sc = o => Math.min(...o.ms.map(fill));
+      if (policy.startsWith('chain')) {   // chainWait = ①만, chainFree = ②만 (어느 요령이 결정적인지 재 보는 용도)
+        const doWait = policy !== 'chainFree', doFree = policy !== 'chainWait';
+        // 2장: 사슬을 아는 플레이어
+        //  ① 쓸 만한 사슬이 둘 다 맨 위면: 빈 칸 2개가 될 때까지 다른 쇠똥구리를 넣지 않고 기다렸다가 사슬을 넣음
+        //  ② 사슬 한쪽만 맨 위면: 짝을 가리고 있는 줄의 맨 위를 먼저 꺼냄
+        const tops = [0, 1, 2].map(c => c === g.lockedCol ? null : g.queues[c][0]);
+        const ready = [], blockers = new Set();
+        for (const a of tops) {
+          if (!a || !a.group) continue;
+          const ms = a.group.members;
+          if (ms.every(m => g.queues[m.col][0] === m)) { if (!ready.some(r => r.group === a.group)) ready.push(a); }
+          else if (doFree) for (const m of ms) if (g.queues[m.col][0] !== m && g.queues[m.col][0]) blockers.add(m.col);
+        }
+        const useful = ready.filter(a => a.group.members.some(m => fill(m) > 0));
+        if (doWait && useful.length) {
+          const best = useful.sort((p, q) => Math.min(...q.group.members.map(fill)) - Math.min(...p.group.members.map(fill)))[0];
+          if (free >= 2) { tryPick(best.col, 0); return; }
+          if (working) return;   // 칸 2개를 비워 두려고 기다림
+        }
+        const singles = legal.filter(o => o.ms.length === 1);
+        const full = singles.filter(o => sc(o) >= 1);
+        const unblock = full.filter(o => blockers.has(o.c));
+        if (unblock.length) { tryPick(any(unblock).c, 0); return; }
+        if (full.length) { tryPick(any(full).c, 0); return; }
+        if (!working) {
+          const ub = legal.filter(o => blockers.has(o.c));
+          const pool = ub.length ? ub : legal;
+          tryPick(pool.sort((a, b) => sc(b) - sc(a))[0].c, 0);
+        }
+        return;
+      }
+      const full = legal.filter(o => sc(o) >= 1);
+      if (full.length) { tryPick(any(full).c, 0); return; }
+      if (!working) tryPick(legal.sort((a, b) => sc(b) - sc(a))[0].c, 0);
+    };
+    for (let k = 0; k < 12000 && g.state === 'play'; k++) { pick(); update(0.05); }
+    const st = g.state;
+    speed = keep.speed; mode = keep.mode;
+    return st;
+  }
+  function lessonStat(i, n = 8, policies = ['random', 'greedy', 'full']) {
+    const out = {};
+    for (const p of policies) { let f = 0; for (let s = 0; s < n; s++) if (lessonRun(i, p, s * 31 + 7) !== 'clear') f++; out[p + 'Fail'] = +(f / n).toFixed(2); }
+    return out;
+  }
+  function testLessons(n) {
+    for (let i = 0; i < BASE_COUNT; i++) {
+      const q = STAGES[i].qa && STAGES[i].qa.engine;
+      if (!q) continue;
+      const keys = Object.keys(q).filter(k => k.endsWith('Fail'));
+      const r = lessonStat(i, n, keys.map(k => k.slice(0, -4)));
+      const inR = (v, a) => !a || (v >= a[0] - 1e-9 && v <= a[1] + 1e-9);
+      for (const k of keys)
+        check(`스테이지 ${i + 1} 레슨(엔진) ${k} ${JSON.stringify(q[k] || '-')}`, inR(r[k], q[k]), JSON.stringify(r));
+    }
+  }
+
   async function run(opt = {}) {
     results.length = 0;
     const backup = {};
@@ -242,6 +335,7 @@
     await step('부스터', testBoosters);
     await step('기믹', testGimmicks);
     await step('보상', testRewards);
+    if (opt.lessons !== false) await step('레슨', () => testLessons(opt.lessonRuns || 8));
     // 복구
     for (const k in backup) if (backup[k] != null) store.set(k, backup[k]);
     cleared = keep.cleared; lastStage = keep.lastStage; speed = keep.speed; mode = keep.mode; inventory = keep.inv; saveInventory(); saveProgress();
@@ -250,5 +344,5 @@
     return { total: results.length, passed: results.length - failed.length, failed, errors };
   }
 
-  window.FunctionalQA = { run, countInvariant, borderHits, runEngine, results };
+  window.FunctionalQA = { run, countInvariant, borderHits, runEngine, lessonRun, lessonStat, testLessons, results };
 })();

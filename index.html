@@ -1191,6 +1191,12 @@ function stageBalance(i) {
     seed: row.seed || 0,
     reward: row.reward || null,
     gimmicks: stageGimmicks(n, tier, row),
+    gen: row.gen || null,
+    qa: row.qa || null,         // 레슨 스테이지의 QA 목표 (등급 목표보다 우선)
+    lesson: row.lesson || '',   // 이 스테이지에서 배울 것 (기획·QA용)
+    hint: row.hint || '',       // 막혔을 때 실패 화면에 보여 줄 요령
+    title: row.title || '',     // 시작 배너 제목
+    intro: row.intro || '',     // 시작 배너 한 줄 (무엇을 보면 되는지)
   };
 }
 function applyStageBalance(i) { Object.assign(STAGES[i], stageBalance(i)); }
@@ -1344,6 +1350,9 @@ function buildStage(idx) {
   const R = grid.length, C = grid[0].length;
   const gm = st.gimmicks || {};
   const maxSlots = st.slots || 5, span = st.jitterSpan || 1;
+  // 레슨용 생성 손잡이 (balance.js stages[n].gen): busy = 동시에 일하는 칸 수, big = 숫자 상한 배수,
+  //  trap = "숫자가 닿는 음식보다 큰" 쇠똥구리를 앞으로 당기는 확률, trapSpan = 최대 몇 칸 앞으로
+  const gen = st.gen || {}, busy = gen.busy || 3, big = gen.big || 2.5;
   // 자물쇠 목록 (그림 속 🔑을 먹을 때마다 앞에서부터 하나씩 열림): 잠긴 일터 칸들 → 잠긴 대기열 줄
   const lockSlots = Math.min(maxSlots - 2, gm.lockSlots || 0), lockCol = gm.lockCols ? 2 : -1;
   const locks = [];
@@ -1393,9 +1402,10 @@ function buildStage(idx) {
       let pick = rng() * sum, color = colors[0];
       for (const col of colors) { pick -= by[col].length; if (pick <= 0) { color = col; break; } }
       let size = Math.round(avg * (0.6 + rng() * 0.8));
-      size = Math.min(size, Math.max(6, Math.round(by[color].length * 2.5)), remain[color]);
+      size = Math.min(size, Math.max(6, Math.round(by[color].length * big)), remain[color]);
       if (remain[color] - size < 3) size = remain[color];
-      const a = { color, total: size, group: null };
+      // short: 지금 닿는 음식보다 숫자가 큼 = 다른 색이 길을 열어 줘야 끝나는 쇠똥구리 (함정 재료)
+      const a = { color, total: size, group: null, short: size > by[color].length };
       remain[color] -= size;
       seq.push(a); active.push({ a, left: size, slot: freeSlot() });
       return true;
@@ -1403,7 +1413,7 @@ function buildStage(idx) {
     for (let guard = 0; total > 0; guard++) {
       if (guard > 20000) return { ok: false };
       let by = reachable();
-      while (active.length < Math.min(3, open - 1) && addAnt(by)) {}
+      while (active.length < (gen.busy ? Math.min(busy, open) : Math.min(3, open - 1)) && addAnt(by)) {}
       let progress = false;
       for (const act of active.slice()) {
         const list = by[act.a.color];
@@ -1469,6 +1479,20 @@ function buildStage(idx) {
     // 순서 뒤섞기: 허들 스테이지는 더 멀리(span칸까지) 바꿔서 "지금 못 먹는 색"이 앞에 나옴
     if (rng() < st.jitter) { const j = Math.min(seq.length - 1, i + 1 + Math.floor(rng() * span)); [seq[i], seq[j]] = [seq[j], seq[i]]; i++; }
   }
+  // 앞으로 당기기. trap: 길이 열려야 끝나는 쇠똥구리만 → "닿기만 하면 넣는" 습관을 벌줌
+  //               pull: 아무 쇠똥구리나 → "지금 못 먹는 색"이 맨 위에 와서 "넣지 말고 기다리기"를 가르침
+  const pullForward = (p, sp, only) => {
+    for (let i = 1; i < seq.length; i++) {
+      if ((only && !seq[i].short) || rng() >= p) continue;
+      // safeTop: 시작할 때 맨 위 3마리는 그대로 (첫 수부터 희생을 강요하지 않음)
+      const lo = gen.safeTop ? 3 : 0;
+      if (i <= lo) continue;
+      const j = Math.max(lo, i - 1 - Math.floor(rng() * sp));
+      const [a] = seq.splice(i, 1); seq.splice(j, 0, a);
+    }
+  };
+  if (gen.trap) pullForward(gen.trap, gen.trapSpan || 2, true);
+  if (gen.pull) pullForward(gen.pull, gen.pullSpan || 4, false);
   // 대기열 3줄에 나눔. ⛓ 잠긴 줄은 그 줄을 여는 열쇠를 먹은 뒤에 나올 쇠똥구리만 받음
   const colKey = locks.findIndex(L => L.type === 'col');
   const colOpenAt = colKey >= 0 ? (res.keyAt[colKey] != null ? res.keyAt[colKey] : seq.length) : 0;
@@ -1492,6 +1516,27 @@ function buildStage(idx) {
     const pick = opts[Math.floor(rng() * opts.length)];
     const grp = { members: pick.map(c => cols[c][r]) };
     grp.members.forEach(a => a.group = grp);
+  }
+  // 레슨용 엇갈린 사슬 (gen.skew = 개수, gen.skewMax = 최대 높이 차):
+  //  이웃 줄의 서로 다른 높이 두 마리를 묶음 → 짝을 꺼내려면 그 줄을 먼저 비워야 하고, 그동안 이쪽 줄은 막힘.
+  //  사슬끼리 엇갈리면(X자) 영영 못 고르므로 피함. 풀 수 있는지는 QA 솔버가 확인.
+  if (gen.skew) {
+    const made = [];   // [왼줄, 왼행, 오른행] (위에서 만든 같은 높이 사슬도 포함)
+    cols.forEach((col, c) => col.forEach((a, r) => { if (a.group && c < 2 && a.group.members.includes(cols[c + 1][r])) made.push([c, r, r]); }));
+    for (let t = 0, tries = 0; t < gen.skew && tries < 200; tries++) {
+      const pair = rng() < 0.5 ? [0, 1] : [1, 2];
+      if (pair.includes(lockCol)) continue;
+      const ra = 1 + Math.floor(rng() * Math.max(1, cols[pair[0]].length - 1));
+      const d = (1 + Math.floor(rng() * (gen.skewMax || 2))) * (rng() < 0.5 ? -1 : 1);
+      const rb = ra + d, A = cols[pair[0]][ra], B = cols[pair[1]][rb];
+      if (!A || !B || A.group || B.group || rb < 1) continue;
+      // X자로 엇갈림 금지 (같은 줄 쌍), 가운데 줄을 거치는 순환도 막기 위해 가운데 줄의 같은 높이 근처는 피함
+      if (made.some(([c, a, b]) => c === pair[0] && (a - ra) * (b - rb) <= 0)) continue;
+      if (made.some(([c, a, b]) => c !== pair[0] && Math.abs((pair[0] === 1 ? ra : rb) - (c === 1 ? a : b)) <= 2)) continue;
+      const grp = { members: [A, B] };
+      A.group = B.group = grp;
+      made.push([pair[0], ra, rb]); t++;
+    }
   }
   return { grid, cols, ice, keys, gifts, locks: locks.slice(0, keys.length) };
 }
@@ -2333,6 +2378,7 @@ function chooseStage(idx) {
 // ---- 기믹 안내 ----
 function stageGimmickKeys(i) {
   const gm = (STAGES[i] && STAGES[i].gimmicks) || {}, out = [];
+  if (STAGES[i] && (STAGES[i].link > 0 || (STAGES[i].gen && STAGES[i].gen.skew))) out.push('chain');   // 🔗 사슬 (2장)
   if (gm.lockSlots || gm.lockCols) out.push('key');
   if (gm.lockCols) out.push('colLock');
   if (gm.ice) out.push('ice');
@@ -2387,7 +2433,9 @@ function startStage(idx) {
   // 허들 스테이지 알림
   const tr = tierOf(idx), st = STAGES[idx];
   if (tr && (st.tier === 'hard' || st.tier === 'boss'))
-    game.banner = { text: st.tier === 'boss' ? '🔥 보스 스테이지!' : '⚠ 어려운 스테이지', sub: gimmickSummary(idx) || '순서를 잘 생각해서 골라요', color: tr.color, t: 1.6 };
+    game.banner = { text: st.title || (st.tier === 'boss' ? '🔥 보스 스테이지!' : '⚠ 어려운 스테이지'), sub: st.intro || gimmickSummary(idx) || '순서를 잘 생각해서 골라요', color: tr.color, t: st.intro ? 2.6 : 1.6 };
+  else if (st.intro)   // 레슨 스테이지: 이번 판에서 볼 것 (정답이 아니라 "무엇을 보면 되는지"만)
+    game.banner = { text: st.title || '💡 이번 판', sub: st.intro, color: '#ffe9a8', t: 2.6 };
   // 새 기믹이 처음 나오는 스테이지: 소개 창 (한 번만)
   const fresh = stageGimmickKeys(idx).filter(k => GIMMICK_FIRST[k] === idx && !introSeen[k]);
   if (fresh.length && idx < BASE_COUNT && overlay !== 'help') { introList = fresh; overlay = 'intro'; }
@@ -3342,7 +3390,15 @@ function drawPlay() {
   }
 
   for (let k = 0; k < 5; k++) {
-    if (g.locked[k]) {   // 잠긴 일터 (허들)
+    if (g.locked[k] && !g.locks.some(L => L.type === 'slot' && L.slot === k && !L.open)) {
+      // 이 스테이지에 없는 칸 (레슨: 칸 수 줄이기) — 흙으로 메워 둠. 자물쇠가 아니라 열 수 없음
+      const sx = SLOT.x0 + k * (SLOT.w + SLOT.gap);
+      pxBox(sx + 4, SLOT.y + 10, SLOT.w - 8, SLOT.h - 14, '#6e5a46', '#5c4a38', 2);
+      ctx.fillStyle = '#5a4836';
+      for (let t = 0; t < 5; t++) ctx.fillRect(sx + 12 + ((t * 23) % (SLOT.w - 28)), SLOT.y + 18 + ((t * 13) % (SLOT.h - 30)), 6, 4);
+      continue;
+    }
+    if (g.locked[k]) {   // 잠긴 일터 (🔑으로 열림)
       const sx = SLOT.x0 + k * (SLOT.w + SLOT.gap);
       pxBox(sx, SLOT.y, SLOT.w, SLOT.h, '#8d7b68', '#5c4a38');
       const lx = sx + SLOT.w / 2, ly = SLOT.y + SLOT.h / 2 + 4;
@@ -3419,11 +3475,23 @@ function drawPlay() {
   ctx.restore();
 
   // 일터 쇠똥구리
+  // 지금 닿는 음식이 없는 일터 쇠똥구리는 💤 (칸만 차지하고 있다는 걸 보여 줌)
+  const canReach = color => {
+    for (const k of g.reach.acc.keys()) {
+      const r = Math.floor(k / g.C), c = k % g.C;
+      if (g.grid[r][c] === color && !g.reserved[r][c] && !g.ice.has(k)) return true;
+    }
+    return false;
+  };
   g.slots.forEach(a => {
     if (!a) return;
-    const fr = Math.floor(time * 6) % 2;
-    drawSprite('beetle' + fr, a.color, 0, CARD_PX, a.x + shakeOf(a), a.y);
+    const idle = a.total - a.dispatched > 0 && g.state !== 'clear' && !canReach(a.color);
+    if (!idle) a.idleAt = null; else if (a.idleAt == null) a.idleAt = time;
+    const sleepy = a.idleAt != null && time - a.idleAt > 0.5;
+    const fr = sleepy ? 0 : Math.floor(time * 6) % 2;
+    drawSprite('beetle' + fr, a.color, 0, CARD_PX, a.x + shakeOf(a), a.y, sleepy ? 0.6 : 1);
     text(String(a.total - a.dispatched), a.x, a.y + 7, 14, '#ffffff', 'center', OUTLINE);
+    if (sleepy) text('💤', a.x + 22, a.y - 18 - Math.round(Math.sin(time * 3) * 3), 14, '#ffffff');
     if (mode === 'coop') {
       pxBox(a.x - 34, a.y - 30, 22, 16, PCOL[a.owner], OUTLINE, 2);
       text(`${a.owner + 1}P`, a.x - 23, a.y - 22, 10, '#ffffff');
@@ -3711,10 +3779,15 @@ function drawOverlay() {
   } else if (overlay === 'lobby') {
     drawLobby();
   } else if (overlay === 'fail') {
+    const hint = (STAGES[game.idx] && STAGES[game.idx].hint) || '';
     panel(220, 340);
-    text('쇠똥구리들이 꼼짝 못 해요!', W / 2, 266, 20, '#b33a2a');
-    text('일터가 꽉 차서 더 옮길 수 없어요.', W / 2, 300, 14, '#3a2412');
-    drawSprite('beetle' + (Math.floor(time * 4) % 2), 'R', 0, 3, W / 2, 352);
+    text('쇠똥구리들이 꼼짝 못 해요!', W / 2, 256, 20, '#b33a2a');
+    text('💤 쇠똥구리가 일터를 막고 있어요.', W / 2, 286, 14, '#3a2412');
+    if (hint) {   // 레슨 스테이지: 이번 판의 요령
+      const lines = wrapText('💡 ' + hint, W - 100, 13);
+      pxBox(44, 300, W - 88, 14 + lines.length * 18, '#fff4c8', '#c8b08a', 2);
+      lines.forEach((t, i) => text(t, W / 2, 316 + i * 18, 13, '#7a4210'));
+    } else drawSprite('beetle' + (Math.floor(time * 4) % 2), 'R', 0, 3, W / 2, 340);
     if (online()) {
       if (net.role === 'host') button(W / 2 - 80, 400, 160, 50, '다시 하기', () => netStartGame(game.idx));
       else text('방장이 다시 시작할 수 있어요', W / 2, 424, 14, '#5c4a38');
