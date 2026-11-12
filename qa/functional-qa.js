@@ -244,6 +244,39 @@
       for (const k of g.reach.acc.keys()) { const r = Math.floor(k / g.C), c = k % g.C; if (g.grid[r][c] === color && !g.reserved[r][c] && !g.ice.has(k)) n++; }
       return n;
     };
+    // 🔑까지 가장 적게 먹고 갈 수 있는 길 위의 음식 색들 (지금 닿는 칸의 색이 있으면 그것만 = 다음에 팔 색)
+    let kcAt = -1, kcSet = null;
+    const keyColors = () => {
+      if (!g.keys.size) return null;
+      if (kcAt === g.remaining) return kcSet;
+      kcAt = g.remaining;
+      const R = g.R, C = g.C, cost = new Array(R * C).fill(Infinity), par = new Array(R * C).fill(-1), done = new Array(R * C).fill(false);
+      const w = k => g.grid[Math.floor(k / C)][k % C] ? (g.ice.has(k) ? 3 : 1) : 0;
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if (r === 0 || c === 0 || r === R - 1 || c === C - 1) cost[r * C + c] = w(r * C + c);
+      for (;;) {
+        let b = -1;
+        for (let k = 0; k < R * C; k++) if (!done[k] && cost[k] < Infinity && (b < 0 || cost[k] < cost[b])) b = k;
+        if (b < 0) break;
+        done[b] = true;
+        const r = Math.floor(b / C), c = b % C;
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nr = r + dr, nc = c + dc;
+          if (nr < 0 || nc < 0 || nr >= R || nc >= C) continue;
+          const n = nr * C + nc, v = cost[b] + w(n);
+          if (v < cost[n]) { cost[n] = v; par[n] = b; }
+        }
+      }
+      let key = -1;
+      for (const k of g.keys) if (key < 0 || cost[k] < cost[key]) key = k;
+      const all = new Set(), now = new Set();
+      for (let k = key; k >= 0; k = par[k]) {
+        const col = g.grid[Math.floor(k / C)][k % C];
+        if (!col) continue;
+        all.add(col);
+        if (g.reach.acc.has(k) && !g.ice.has(k)) now.add(col);
+      }
+      return (kcSet = now.size ? now : all);
+    };
     const pick = () => {
       if (g.state !== 'play' || !freeSlots().length) return;
       const free = freeSlots().length, legal = [];
@@ -296,6 +329,17 @@
         return;
       }
       const full = legal.filter(o => sc(o) >= 1);
+      if (policy === 'key') {
+        // 3장: 열쇠를 아는 플레이어 = full + "🔑까지 가는 길을 막고 있는 색"을 먼저 고름
+        //  ① 숫자를 다 채울 수 있는 쇠똥구리 중 열쇠 길 색이 있으면 그것부터
+        //  ② 없으면, 열쇠 길 색이고 닿는 음식이 있으면 숫자가 모자라도 넣음 (빈 칸이 2개 이상일 때 — 길을 파서 칸을 늘리는 투자)
+        const kc = keyColors();
+        const onPath = o => kc && o.ms.some(m => kc.has(m.color));
+        const fp = full.filter(onPath);
+        if (fp.length) { tryPick(any(fp).c, 0); return; }
+        const part = legal.filter(o => onPath(o) && o.ms.every(m => hasTarget(m.color)));
+        if (part.length && free >= 2) { tryPick(any(part).c, 0); return; }
+      }
       if (full.length) { tryPick(any(full).c, 0); return; }
       if (!working) tryPick(legal.sort((a, b) => sc(b) - sc(a))[0].c, 0);
     };

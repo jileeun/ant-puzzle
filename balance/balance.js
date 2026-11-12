@@ -73,10 +73,8 @@ window.BALANCE = {
   //   ice       : 얼음 음식 비율 (전체 음식 대비)
   //   giftAt    : 🎁을 숨길 위치 (먹히는 순서의 % 지점), 개수만큼
   gimmickRules: [
-    { when: 'n > 12 && n % 3 === 0 && n % 10 !== 1', set: { ice: 0.04 } },           // 이후 보통에도 가끔
-    { when: 'n === 15', set: { lockSlots: 1, ice: 0.08, keyAt: [0.3] } },            // ⚠ 얼음 + 열쇠
-    { when: 'n === 17', set: { giftAt: [0.5] } },
-    { when: 'n === 20', set: { lockSlots: 2, ice: 0.08, keyAt: [0.3, 0.55], giftAt: [0.5] } },           // 🔥
+    //  13~20(3장 열쇠)은 stages 행에서 직접 정함 — 아래 규칙은 21번 이후(아직 예전 방식)에만 적용
+    { when: 'n > 20 && n % 3 === 0 && n % 10 !== 1', set: { ice: 0.04 } },           // 보통에도 가끔
     { when: 'n === 22', set: { lockCols: 1, keyAt: [0.2] } },                        // ⛓ 첫 등장
     { when: 'n > 22 && n % 4 === 2', set: { lockCols: 1 } },
     { when: 'n === 25', set: { lockSlots: 1, lockCols: 1, keyAt: [0.2, 0.4] } },     // ⚠ 자물쇠 2개
@@ -171,9 +169,61 @@ window.BALANCE = {
           title: '⚠ 2장 시험', intro: '1장과 2장에서 배운 걸 모두 써요!', reward: { unchain: 1 },
           hint: '숫자 확인 → 사슬 짝 꺼내기 → 칸 2개 비우기. 하나라도 빠지면 막혀요.',
           qa: { engine: { fullFail: [0.6, 1], chainWaitFail: [0.6, 1], chainFreeFail: [0.6, 1], chainFail: [0, 0] } } },
-    14: { seed: 5 },  15: { seed: 27 },                 // ⚠ 🔑 🧊
-    18: { seed: 2 },
-    20: { seed: 12 },                                   // 🔥 🔑×2 🧊 🎁
+    // ===== 3장: 열쇠 🔑 (13~20) — "열쇠를 먹으면 일터가 넓어진다" =====
+    //  잠긴 일터 칸(자물쇠)으로 좁게 시작하고, 그림 속 🔑 음식을 가져오면 한 칸씩 열림.
+    //  어려움으로 조이는 장이 아니라 "좁다 → 열쇠 → 넓어진다"는 풀림의 재미를 주는 장 (GDD 5.B 원칙 6).
+    //  흐름: 13 열쇠 소개 → 14 깊은 곳의 열쇠 → 15 쉬어 가기 🎁 → 16 열쇠 2개 → 17 사슬과 조합 → 18 쉬어 가기 🎁 → 19 두 칸으로 시작 → 20 시험
+    //  slots = 자물쇠가 다 열렸을 때의 칸 수, gimmicks.lockSlots = 잠긴 칸 수 (시작 칸 = slots - lockSlots)
+    //  gen.keyDeep: 🔑을 그림 안쪽 깊은 곳(가장 깊은 칸 × 비율 이상)에만 둠
+    //  qa.engine 전략: key = full + "🔑까지 가는 길을 막고 있는 색"을 먼저 고름
+    //  ※ 측정 결과 key 전략이 full 보다 나은 판은 찾지 못함 (열쇠는 어차피 먹히므로) — "열쇠를 노려야만 풀리는" 강제 판은 없음.
+    //    그래서 시험(20)은 "아무거나 누르면 막히고, 1장에서 배운 대로 하면 풀린다"로 검증. 자세한 건 docs/GDD.md 5.F
+    //  ※ ants·jitterSpan 을 행에 직접 적음 (tier 를 바꿔도 판이 달라지지 않게)
+    13: { seed: 1, tier: 'normal', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
+          gimmicks: { lockSlots: 1, keyAt: [0.3] },
+          lesson: '열쇠 소개: 칸 3개로 시작, 그림 속 🔑을 가져오면 잠긴 일터가 열림 (얕은 곳의 열쇠)',
+          hint: '그림 속 🔑 음식을 가져오면 잠긴 일터가 열려요. 열쇠와 같은 색 쇠똥구리를 보내요.',
+          qa: { engine: { randomFail: [0, 0.5], greedyFail: [0, 0], fullFail: [0, 0], keyFail: [0, 0] } } },
+    14: { seed: 1, tier: 'normal', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
+          gimmicks: { lockSlots: 1, keyAt: [0.5] }, gen: { keyDeep: 0.6 },
+          lesson: '깊은 곳의 열쇠: 🔑이 그림 안쪽에 있음 → 어느 색을 먹어야 열쇠까지 길이 나는지 읽기',
+          title: '💡 깊은 곳의 열쇠', intro: '열쇠까지 가는 길을 어떤 색이 막고 있는지 봐요',
+          hint: '열쇠가 안쪽에 있어요. 열쇠를 가리고 있는 바깥쪽 음식부터 먹어서 길을 내요.',
+          qa: { engine: { randomFail: [0.1, 0.65], greedyFail: [0, 0.1], fullFail: [0, 0], keyFail: [0, 0] } } },
+    15: { seed: 1, tier: 'easy', slots: 5, link: 0, jitter: 0.05, jitterSpan: 1, ants: 20,
+          gimmicks: { lockSlots: 1, keyAt: [0.4], giftAt: [0.6] }, gen: { keyDeep: 0.5 },
+          lesson: '쉬어 가기: 칸 4개로 넉넉하게 시작, 열쇠와 🎁 선물을 모두 챙기는 판',
+          title: '🎁 열쇠와 선물', intro: '열쇠도 선물도 그림 속에 있어요',
+          hint: '열쇠와 선물을 가리고 있는 바깥쪽 음식부터 먹어요.',
+          qa: { engine: { randomFail: [0, 0.3], greedyFail: [0, 0], fullFail: [0, 0], keyFail: [0, 0] } } },
+    16: { seed: 3, tier: 'normal', slots: 5, link: 0, jitter: 0.05, jitterSpan: 1, ants: 19,
+          gimmicks: { lockSlots: 2, keyAt: [0.3, 0.6] }, gen: { keyDeep: 0.6, busy: 3, big: 3, trap: 0.8, trapSpan: 2 },
+          lesson: '열쇠 2개: 칸 3개로 시작해 5개까지. 가까운 열쇠부터 열고, 숫자 함정(1장)은 칸이 넓어진 뒤에',
+          title: '💡 열쇠가 2개!', intro: '가까운 열쇠부터 열면 칸이 늘어나요',
+          hint: '칸이 좁을 땐 숫자가 큰 쇠똥구리를 넣지 말고, 열쇠를 먼저 열어 칸을 늘려요.',
+          qa: { engine: { randomFail: [0.3, 0.9], greedyFail: [0, 0.15], fullFail: [0, 0], keyFail: [0, 0] } } },
+    17: { seed: 2, tier: 'normal', slots: 5, link: 0.35, jitter: 0.05, jitterSpan: 1, ants: 19,
+          gimmicks: { lockSlots: 1, keyAt: [0.5] }, gen: { keyDeep: 0.6 },
+          lesson: '사슬과 조합: 사슬은 칸 2개가 필요 → 열쇠로 칸을 늘리면 사슬이 편해짐 (안내 없이)',
+          hint: '사슬은 빈 칸이 2개 필요해요. 열쇠를 먼저 열면 사슬 넣기가 쉬워져요.',
+          qa: { engine: { randomFail: [0.1, 0.65], greedyFail: [0, 0.1], fullFail: [0, 0], keyFail: [0, 0], chainFail: [0, 0] } } },
+    18: { seed: 2, tier: 'easy', slots: 5, link: 0, jitter: 0.05, jitterSpan: 1, ants: 19,
+          gimmicks: { lockSlots: 1, keyAt: [0.4], giftAt: [0.6] }, gen: { keyDeep: 0.5 },
+          lesson: '쉬어 가기: 시험 전 숨 고르기 + 🎁 선물',
+          hint: '열쇠와 선물을 가리고 있는 바깥쪽 음식부터 먹어요.',
+          qa: { engine: { randomFail: [0, 0.35], greedyFail: [0, 0], fullFail: [0, 0], keyFail: [0, 0] } } },
+    19: { seed: 1, tier: 'normal', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 20,
+          gimmicks: { lockSlots: 2, keyAt: [0.25, 0.5] }, gen: { keyDeep: 0.6, busy: 3, big: 3, trap: 0.8, trapSpan: 2 },
+          lesson: '두 칸으로 시작: 칸 2개뿐이라 한 마리만 막혀도 위험 → 열쇠부터 (시험 연습)',
+          title: '💡 칸이 2개뿐!', intro: '열쇠 두 개를 열어 칸을 넓혀요',
+          hint: '칸이 2개뿐일 땐 바로 일을 끝낼 쇠똥구리만 넣고, 열쇠를 열어 칸부터 늘려요.',
+          qa: { engine: { randomFail: [0.3, 0.9], greedyFail: [0, 0.5], fullFail: [0, 0], keyFail: [0, 0] } } },
+    20: { seed: 9, tier: 'hard', slots: 5, link: 0, jitter: 0.05, jitterSpan: 1, ants: 24,
+          gimmicks: { lockSlots: 3, keyAt: [0.2, 0.4, 0.6] }, gen: { keyDeep: 0.6, busy: 3, big: 3, trap: 0.8, trapSpan: 3 },
+          lesson: '3장 시험: 칸 2개로 시작해 열쇠 3개로 5칸까지 — 숫자 보기(1장) + 열쇠로 칸 늘리기',
+          title: '⚠ 3장 시험', intro: '열쇠 3개! 칸을 하나씩 넓혀 가요', reward: { key: 1 },
+          hint: '칸이 좁을 땐 숫자가 큰 쇠똥구리를 넣지 말아요. 열쇠를 하나씩 열면 점점 쉬워져요.',
+          qa: { engine: { randomFail: [0.7, 1], greedyFail: [0.2, 0.75], fullFail: [0, 0], keyFail: [0, 0] } } },
     21: { seed: 1 },
     22: { seed: 12, jitter: 0.12, link: 0.25 },         // ⛓ 첫 등장: 순서 뒤섞기·사슬 완화
     23: { seed: 8 },  24: { seed: 1 },
