@@ -1468,7 +1468,29 @@ function buildStage(idx) {
     return -1;
   };
   const keyFr = gm.keyAt || [0.25, 0.45, 0.6];
-  const keys = locks.map((L, i) => pickAt(keyFr[Math.min(i, keyFr.length - 1)])).filter(k => k >= 0);
+  // 레슨용 gen.keyDeep (0~1): 🔑을 그림 **안쪽 깊은 곳**에만 둠 → "열쇠까지 길을 내는 색"을 읽어야 하게.
+  //  깊이 = 바깥에서 그 칸까지 가려면 먹어야 하는 음식 수(자기 포함). keyAt 지점부터 먹히는 순서대로 보다가
+  //  깊이가 (가장 깊은 칸 × keyDeep) 이상인 첫 칸에 숨김. 없으면 예전처럼 keyAt 지점.
+  let depth = null, deepMin = 0;
+  if (gen.keyDeep) {
+    depth = new Map();
+    const out = reachMap(grid).dist;   // 바깥과 이어진 빈 칸
+    let layer = foodCells.filter(k => { const r = Math.floor(k / C), c = k % C; return r === 0 || c === 0 || r === R - 1 || c === C - 1 || nb(k).some(n => !grid[Math.floor(n / C)][n % C] && out[n] >= 0); });
+    for (let d = 1; layer.length; d++) {
+      const next = [];
+      for (const k of layer) if (!depth.has(k)) { depth.set(k, d); for (const n of nb(k)) if (grid[Math.floor(n / C)][n % C] && !depth.has(n)) next.push(n); }
+      layer = next;
+    }
+    deepMin = Math.max(...depth.values()) * gen.keyDeep;
+  }
+  const pickKey = f => {
+    if (depth) {
+      const o = base.removed;
+      for (let i = Math.floor(f * o.length); i < o.length; i++) if (!used.has(o[i]) && (depth.get(o[i]) || 0) >= deepMin) { used.add(o[i]); return o[i]; }
+    }
+    return pickAt(f);
+  };
+  const keys = locks.map((L, i) => pickKey(keyFr[Math.min(i, keyFr.length - 1)])).filter(k => k >= 0);
   const gifts = [];
   for (const f of gm.giftAt || []) { const k = pickAt(f); if (k >= 0) gifts.push(k); }
   // 2차: 열쇠를 먹으면 자물쇠가 열리는 것까지 흉내 낸 진짜 순서
