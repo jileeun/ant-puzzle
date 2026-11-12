@@ -108,7 +108,7 @@
       const onTop = Math.abs(cr.y - T.y0) < 1, onL = Math.abs(cr.x - T.x0) < 1, onR = Math.abs(cr.x - T.x1) < 1;
       if (!(onTop || onL || onR)) continue;
       const [lx, ly] = laneOffset(cr, BP);   // 게임 그리기와 같은 함수
-      const sp = vertical ? getSprite('beetle0', cr.color, 0, BP) : getSprite('beetleWalk0', cr.color, 0, BP);
+      const sp = getSprite(crPose(cr).side ? 'beetleWalk0' : 'beetle0', cr.color, 0, BP);   // 아래로 갈 때도 옆모습 (drawPlay 와 같은 자세)
       const x = cr.x + lx, y = cr.y + ly;
       if (x - sp.lw / 2 < inner.x0 - 0.5 || x + sp.lw / 2 > inner.x1 + 0.5 || y - sp.lh / 2 < inner.y0 - 0.5) hits++;
     }
