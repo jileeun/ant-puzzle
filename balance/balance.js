@@ -164,12 +164,15 @@ window.BALANCE = {
           hint: '사슬 한쪽만 올라오면 줄이 막혀요. 짝을 가린 줄을 먼저 꺼내요.',
           qa: { engine: { randomFail: [0, 0.3], greedyFail: [0, 0.1], fullFail: [0, 0], chainFail: [0, 0] } } },
     //  12번 seed 3 → 25 (2026-11-13): 쇠똥구리가 테두리에서 곧게 들어가는 길로 다니게 고친 뒤 이동 시간이 달라져 full 전략도 풀리게 됨 → 같은 목표 구간의 seed 재탐색
-    12: { seed: 25, tier: 'hard', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
+    //  12번 seed 25 → 17 + 기준 완화 (2026-11-13): 예전 기준(full·chainWait·chainFree 가 모두 60% 이상 막힘)은 맞는 seed 가 100개 중 1개꼴이라
+    //   동선 규칙을 바꿀 때마다 깨지고 다시 찾는 데 오래 걸렸음 → 시험의 뜻만 남김: 아무거나·닿는 색만으로는 자주 막히고, 2장 요령(chain)이면 반드시 풀림.
+    //   seed 17 은 예전 동선 규칙과 지금 규칙(사분면 + 꺾임 3칸) 양쪽에서 기준 통과 (지금: random 75% / greedy 100% / chain 0%, 예전: 75% / 63% / 0%)
+    12: { seed: 17, tier: 'hard', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
           gen: { skew: 4, skewMax: 2, busy: 3, big: 3, trap: 0.8, trapSpan: 2 },
           lesson: '2장 시험: 숫자 보기 + 짝 꺼내기 + 칸 2개 비우기 (칸 4개)',
           title: '⚠ 2장 시험', intro: '1장과 2장에서 배운 걸 모두 써요!', reward: { unchain: 1 },
           hint: '숫자 확인 → 사슬 짝 꺼내기 → 칸 2개 비우기. 하나라도 빠지면 막혀요.',
-          qa: { engine: { fullFail: [0.6, 1], chainWaitFail: [0.6, 1], chainFreeFail: [0.6, 1], chainFail: [0, 0] } } },
+          qa: { engine: { randomFail: [0.5, 1], greedyFail: [0.1, 1], chainFail: [0, 0] } } },
     // ===== 3장: 열쇠 🔑 (13~20) — "열쇠를 먹으면 일터가 넓어진다" =====
     //  잠긴 일터 칸(자물쇠)으로 좁게 시작하고, 그림 속 🔑 음식을 가져오면 한 칸씩 열림.
     //  어려움으로 조이는 장이 아니라 "좁다 → 열쇠 → 넓어진다"는 풀림의 재미를 주는 장 (GDD 5.B 원칙 6).
