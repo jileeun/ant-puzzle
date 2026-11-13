@@ -163,7 +163,8 @@ window.BALANCE = {
           lesson: '쉬어 가기: 칸 5개, 사슬이 많아도 여유 있게 풀리는 판 (시험 전 숨 고르기)',
           hint: '사슬 한쪽만 올라오면 줄이 막혀요. 짝을 가린 줄을 먼저 꺼내요.',
           qa: { engine: { randomFail: [0, 0.3], greedyFail: [0, 0.1], fullFail: [0, 0], chainFail: [0, 0] } } },
-    12: { seed: 3, tier: 'hard', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
+    //  12번 seed 3 → 25 (2026-11-13): 쇠똥구리가 테두리에서 곧게 들어가는 길로 다니게 고친 뒤 이동 시간이 달라져 full 전략도 풀리게 됨 → 같은 목표 구간의 seed 재탐색
+    12: { seed: 25, tier: 'hard', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 18,
           gen: { skew: 4, skewMax: 2, busy: 3, big: 3, trap: 0.8, trapSpan: 2 },
           lesson: '2장 시험: 숫자 보기 + 짝 꺼내기 + 칸 2개 비우기 (칸 4개)',
           title: '⚠ 2장 시험', intro: '1장과 2장에서 배운 걸 모두 써요!', reward: { unchain: 1 },
@@ -212,7 +213,8 @@ window.BALANCE = {
           lesson: '쉬어 가기: 시험 전 숨 고르기 + 🎁 선물',
           hint: '열쇠와 선물을 가리고 있는 바깥쪽 음식부터 먹어요.',
           qa: { engine: { randomFail: [0, 0.35], greedyFail: [0, 0], fullFail: [0, 0], keyFail: [0, 0] } } },
-    19: { seed: 1, tier: 'normal', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 20,
+    //  19번 seed 1 → 3 (2026-11-13): 12번과 같은 이유 (동선 수정 뒤 seed 1 은 full·key 도 63% 막힘)
+    19: { seed: 3, tier: 'normal', slots: 4, link: 0, jitter: 0.05, jitterSpan: 1, ants: 20,
           gimmicks: { lockSlots: 2, keyAt: [0.25, 0.5] }, gen: { keyDeep: 0.6, busy: 3, big: 3, trap: 0.8, trapSpan: 2 },
           lesson: '두 칸으로 시작: 칸 2개뿐이라 한 마리만 막혀도 위험 → 열쇠부터 (시험 연습)',
           title: '💡 칸이 2개뿐!', intro: '열쇠 두 개를 열어 칸을 넓혀요',
