@@ -2774,7 +2774,7 @@ const turnCost = cs => TURN_CELLS * cs;
 //  (예전에는 집에서 잰 거리가 짧은 쪽으로 돌아서, 왼쪽 집은 오른쪽 위 음식도 왼쪽 변으로 돌아갔음)
 //  옆 변·아래 변 입구는 가는 길이 한쪽뿐이라 짧은 쪽 그대로. 가운데 집은 굴을 비키는 방향도 함께 고름.
 //  → { d: 집에서 입구까지 길이(고르는 기준. OPP_COST 포함), sp: 집에서 길로 올라가는 점들, P1: 길에 올라선 점, force: along 방향 }
-//  음식 반대쪽 옆 변으로 들어가 그림을 가로지르는 길(오른쪽 음식인데 왼쪽 변 입구)은 OPP_COST 를 더해 맨 마지막에만 고름.
+//  음식 반대쪽 절반에 있는 입구(오른쪽 음식인데 왼쪽 변·아래 변 왼쪽 끝 칸으로 들어가 그림을 가로지르는 길)는 OPP_COST 를 더해 맨 마지막에만 고름.
 const OPP_COST = 1e5;
 const foodHalf = (c, C) => c >= C / 2 ? 1 : -1;
 function approach(geo, sx, sy, E, s, half) {
@@ -2788,7 +2788,9 @@ function approach(geo, sx, sy, E, s, half) {
     if (force) { const t = ((trackParam(T, E.x, E.y) - trackParam(T, P1.x, P1.y)) % P + P) % P; d = force > 0 ? t : (P - t) % P; }
     else d = trackDist(T, P1, E);
     d += Math.abs(sx - sp[0].x) + Math.abs(sy - P1.y);
-    if (s === (half > 0 ? 'L' : 'R')) d += OPP_COST;   // 음식 반대쪽 옆 변 입구는 다른 길이 없을 때만
+    // 음식 반대쪽 절반의 입구(변이 위·아래·옆 어디든)는 다른 길이 없을 때만
+    // (예전에는 옆 변만 막아서, 아래 변 맨 끝 칸으로 들어가 그림 안을 가로지르는 길이 1사분면 음식도 왼쪽으로 돌게 했음)
+    if (half > 0 ? E.x < (T.x0 + T.x1) / 2 : E.x >= (T.x0 + T.x1) / 2) d += OPP_COST;
     if (!best || d < best.d - 0.01) best = { d, sp, P1, force };
   }
   return best;
@@ -4007,7 +4009,9 @@ let cheatAll = false, cheatKeys = '', cheatTaps = [], cheatAsk = false;
 function askCheatCode() {
   const code = window.prompt('치트 코드를 입력하세요');
   if (code == null) return;
-  if (code.trim().toLowerCase() === 'open') toggleCheatAll();
+  const cmd = code.trim().toLowerCase();
+  if (cmd === 'open') toggleCheatAll();
+  else if (cmd === 'load') toggleRouteViewer();
   else { toast('코드가 틀렸어요'); beep(160, 0.1, 0.03); }
 }
 function toggleCheatAll() {
@@ -4015,10 +4019,32 @@ function toggleCheatAll() {
   toast(cheatAll ? '🔓 치트: 모든 그림 열림' : '🔒 치트 꺼짐');
   beep(cheatAll ? 880 : 330, 0.12, 0.04);
 }
+// load 치트: 지금 하고 있는 스테이지의 그림(남은 음식·얼음·이미 출발한 음식)을 그대로 떠서
+//  qa/backpath-viewer.html (가는 길·돌아오는 길 확인판)에 띄움. 다시 load 하면 꺼짐 (확인판 안에서 load 쳐도, ✕ 눌러도 꺼짐)
+let routeViewer = null;
+function toggleRouteViewer() {
+  if (routeViewer) { routeViewer.remove(); routeViewer = null; toast('🔒 경로 확인판 꺼짐'); return; }
+  if (screen !== 'play' || !game || !game.grid) { toast('스테이지를 시작한 뒤에 load 하세요'); return; }
+  const snap = {
+    type: 'bb-load',
+    grid: game.grid.map(r => r.map(v => v ? 1 : 0)),
+    ice: [...game.ice],
+    reserved: game.reserved.map(r => r.map(v => v ? 1 : 0)),
+  };
+  const f = document.createElement('iframe');
+  f.src = 'qa/backpath-viewer.html';
+  f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:9999;background:#f4f1e8';
+  f.onload = () => f.contentWindow.postMessage(snap, '*');
+  document.body.appendChild(f);
+  routeViewer = f;
+  toast('🔓 경로 확인판 켜짐');
+}
+window.addEventListener('message', e => { if (e.data && e.data.type === 'bb-viewer-close' && routeViewer) toggleRouteViewer(); });
 window.addEventListener('keydown', e => {
   if (e.key.length !== 1) return;
   cheatKeys = (cheatKeys + e.key.toLowerCase()).slice(-4);
   if (cheatKeys === 'open') { cheatKeys = ''; toggleCheatAll(); }
+  else if (cheatKeys === 'load') { cheatKeys = ''; toggleRouteViewer(); }
 });
 
 // ================== 입력 ==================

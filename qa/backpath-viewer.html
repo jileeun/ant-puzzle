@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>가는 길·돌아오는 길 확인판</title>
+<style>
+body{margin:0;font:14px/1.5 system-ui,sans-serif;background:#f4f1e8;color:#2c2c2a}
+.wrap{max-width:460px;margin:0 auto;padding:12px 16px}
+canvas{width:100%;max-width:420px;display:block;background:#e9dcc0;border:1px solid #b4a27a;touch-action:manipulation}
+.row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+button,select,input{font:inherit;padding:4px 8px}
+button.on{background:#EF9F27;border-color:#854F0B}
+#info{background:#fff;border:1px solid #ccc;padding:8px;white-space:pre-wrap;font-size:13px}
+</style></head><body><div class="wrap">
+<h3 style="margin:4px 0">가는 길 + 돌아오는 길 확인판 (실제 게임 코드)</h3>
+<div class="row">
+ <span>세로</span><input id="R" type="number" min="3" max="16" value="6" style="width:52px">
+ <span>가로</span><input id="C" type="number" min="3" max="16" value="8" style="width:52px">
+ <button id="reset">전부 음식으로 채우기</button>
+</div>
+<div class="row">
+ <span>시작 집</span><input id="home" type="hidden" value="2"><span id="homeBtns"></span>
+ <span>음식 쪽</span><select id="side"><option value="0">가까운 음식</option><option value="-1">왼쪽 절반</option><option value="1">오른쪽 절반</option></select>
+</div>
+<div class="row">
+ <button id="mFood" class="on">칸 클릭 = 음식 켜기/끄기</button>
+ <button id="mTarget">칸 클릭 = 목표 음식 지정</button>
+</div>
+<div class="row"><span>예시</span>
+ <button data-p="1">1 곧게 vs 옆으로</button>
+ <button data-p="2">2 한 번 꺾기</button>
+ <button data-p="3">3 아래로만</button>
+ <button id="play">▶ 걷기</button>
+ <button id="closeV" style="display:none">✕ 닫기 (또는 load)</button>
+</div>
+<div id="fromGame" style="display:none;font-size:12px;color:#0F6E56">게임에서 불러온 현재 그림 (얼음 = 하늘색, 이미 출발한 음식 = 보라 점선). 칸을 눌러 바꿔 볼 수도 있어요.</div>
+<canvas id="cv" width="420" height="560"></canvas>
+<div id="info"></div>
+<p style="font-size:12px;color:#5f5e5a">주황 = 비틀이 집을 음식(여기서 돌아오는 길 시작). 갈색 = 남은 음식, 빈칸 = 먹힌 자리. <b style="color:#185FA5">파란 굵은 선 = 가는 길</b>(findTarget + makePath), <b style="color:#0F6E56">초록 선 = 돌아오는 길</b>(backPath). 목표를 지정하지 않으면 게임처럼 가장 가까운 음식을 자동으로 고릅니다. 가는 길은 음식이 그대로 있는 그림에서, 돌아오는 길은 그 음식을 먹은 뒤의 그림에서 계산합니다.</p>
+</div>
+<script>
+/* ===== index.html 에서 그대로 가져온 코드 (자동 추출) ===== */
+const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
+
+function borderSide(r, c, R, C) {
+  if (r === 0) return 'T';
+  if (r === R - 1) return 'B';
+  if (c === 0) return 'L';
+  return 'R';
+}
+// 그림판 가장자리와 이어진 빈칸을 넓이 우선으로 탐색해서
+// 각 음식 칸마다 "어디로 들어와서 몇 칸 걸어 오는지" 후보를 만든다
+function reachMap(g) {
+  const R = g.length, C = g[0].length, N = R * C;
+  const dist = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), root = new Int32Array(N).fill(-1);
+  const q = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (g[r][c] || !(r === 0 || c === 0 || r === R - 1 || c === C - 1)) continue;
+    const k = r * C + c; dist[k] = 0; root[k] = k; q.push(k);
+  }
+  for (let i = 0; i < q.length; i++) {
+    const k = q[i], r = Math.floor(k / C), c = k % C;
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) continue;
+      dist[n] = dist[k] + 1; par[n] = k; root[n] = root[k]; q.push(n);
+    }
+  }
+  const acc = new Map();
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!g[r][c]) continue;
+    const cands = [];
+    if (r === 0) cands.push({ via: -1, side: 'T', steps: 0 });
+    if (r === R - 1) cands.push({ via: -1, side: 'B', steps: 0 });
+    if (c === 0) cands.push({ via: -1, side: 'L', steps: 0 });
+    if (c === C - 1) cands.push({ via: -1, side: 'R', steps: 0 });
+    for (const [dr, dc] of D4) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C || g[nr][nc]) continue;
+      const n = nr * C + nc;
+      if (dist[n] >= 0) cands.push({ via: n, steps: dist[n] + 1 });
+    }
+    if (cands.length) acc.set(r * C + c, cands);
+  }
+  return { acc, dist, par, root, R, C };
+}
+
+const PIC = { x: 16, y: 74, w: 388, h: 420 };
+
+const HOLE = { x: 210, y: 512 };           // 돌아오는 굴은 가운데
+const SLOT = { y: 548, h: 62, w: 72, gap: 6, x0: 18 };
+
+const TRACK_M = -3;         // 쇠똥구리 길: 그림판 가장자리에서 안쪽으로 3px
+const HOLE_DETOUR = 46;     // 가운데 집의 쇠똥구리는 굴을 비켜서 올라감
+
+const slotCenter = k => ({ x: SLOT.x0 + k * (SLOT.w + SLOT.gap) + SLOT.w / 2, y: SLOT.y + SLOT.h / 2 });
+const homePos = k => ({ x: slotCenter(k).x, y: SLOT.y - 12 });
+
+const cellCenter = (r, c) => [game.gx + c * game.cs + game.cs / 2, game.gy + r * game.cs + game.cs / 2];
+
+// ---- 그림 바깥 네모 길 ----
+function trackParam(T, x, y) {
+  const w = T.x1 - T.x0, h = T.y1 - T.y0;
+  if (Math.abs(y - T.y0) < 0.5) return x - T.x0;
+  if (Math.abs(x - T.x1) < 0.5) return w + (y - T.y0);
+  if (Math.abs(y - T.y1) < 0.5) return w + h + (T.x1 - x);
+  return 2 * w + h + (T.y1 - y);
+}
+// a에서 b까지 네모 길을 따라 (짧은 쪽으로) 가는 꺾임점들. b 포함
+// force: 1(시계 방향) / -1(반시계)로 방향을 정할 수 있음. 없으면 짧은 쪽
+function along(T, a, b, force = 0) {
+  const w = T.x1 - T.x0, h = T.y1 - T.y0, P = 2 * w + 2 * h;
+  const ta = trackParam(T, a.x, a.y), tb = trackParam(T, b.x, b.y);
+  let d = ((tb - ta) % P + P) % P, dir = 1;
+  if (force) { dir = force; if (dir < 0) d = (P - d) % P; }
+  else if (d > P / 2) { d = P - d; dir = -1; }
+  const corners = [[0, T.x0, T.y0], [w, T.x1, T.y0], [w + h, T.x1, T.y1], [2 * w + h, T.x0, T.y1]];
+  const pts = corners
+    .map(([t, x, y]) => ({ dd: dir > 0 ? ((t - ta) % P + P) % P : ((ta - t) % P + P) % P, x, y }))
+    .filter(o => o.dd > 0.01 && o.dd < d - 0.01)
+    .sort((p, q) => p.dd - q.dd)
+    .map(o => ({ x: o.x, y: o.y }));
+  pts.push({ x: b.x, y: b.y });
+  return pts;
+}
+function trackDist(T, a, b) {
+  const P = 2 * (T.x1 - T.x0) + 2 * (T.y1 - T.y0);
+  const d = ((trackParam(T, b.x, b.y) - trackParam(T, a.x, a.y)) % P + P) % P;
+  return Math.min(d, P - d);
+}
+// 그림 크기에 따른 위치 정보 (게임과 순서 시뮬레이션이 같이 씀)
+// 그림과 쇠똥구리 길 사이 여백 (음식 한 칸 크기 단위). 테두리 길을 걷는 쇠똥구리·굴리는 공이
+// 가장자리 음식과 겹쳐 "음식을 뚫고 지나가는" 것처럼 보이지 않게 비워 둠.
+//  위: 걷는 옆모습 반 높이 + 차선 비킴 ≈ 0.9칸
+//  아래: 굴로 돌아올 때 물구나무 선 모습(약 1.7칸 높이)이 그림 쪽으로 솟음 ≈ 1.6칸
+//  양옆: 위에서 본 몸 반 폭 + 차선 비킴 ≈ 1.15칸
+const EDGE = { t: 1.0, b: 1.7, s: 1.25 }, EDGE_PX = 3;
+function geometry(R, C) {
+  const cs = Math.floor(Math.min((PIC.w - 2 * EDGE_PX) / (C + 2 * EDGE.s), (PIC.h - 2 * EDGE_PX) / (R + EDGE.t + EDGE.b), 30));
+  const top = PIC.y + EDGE_PX + EDGE.t * cs, bot = PIC.y + PIC.h - EDGE_PX - EDGE.b * cs;
+  const gx = Math.round(W / 2 - C * cs / 2), gy = Math.round(top + (bot - top - R * cs) / 2);
+  return { cs, gx, gy, T: { x0: PIC.x - TRACK_M, y0: PIC.y - TRACK_M, x1: PIC.x + PIC.w + TRACK_M, y1: PIC.y + PIC.h + TRACK_M } };
+}
+const geoCenter = (geo, r, c) => ({ x: geo.gx + c * geo.cs + geo.cs / 2, y: geo.gy + r * geo.cs + geo.cs / 2 });
+function geoEntry(geo, r, c, side) {
+  const T = geo.T, p = geoCenter(geo, r, c);
+  return side === 'T' ? { x: p.x, y: T.y0 } : side === 'B' ? { x: p.x, y: T.y1 } : side === 'L' ? { x: T.x0, y: p.y } : { x: T.x1, y: p.y };
+}
+// 집에서 나와 굴을 비켜 길로 올라가는 첫 지점
+// hs: 가운데 집이 굴을 비킬 방향 (1 오른쪽 / -1 왼쪽). 없으면 예전처럼 집이 놓인 쪽
+function startPoints(geo, sx, sy, hs = 0) {
+  let dx = sx;
+  if (Math.abs(sx - HOLE.x) < HOLE_DETOUR) dx = HOLE.x + (hs || (sx >= HOLE.x ? 1 : -1)) * HOLE_DETOUR;
+  const T = geo.T, px = Math.max(T.x0, Math.min(T.x1, dx));
+  return dx !== sx ? [{ x: dx, y: sy }, { x: px, y: T.y1 }] : [{ x: px, y: T.y1 }];
+}
+// 후보 경로의 길이 (집 → 길 → 들어가는 지점 → 빈 길로 꺾어서 → 음식)
+function candEntry(geo, info, k, cand) {
+  const C = info.C, r = Math.floor(k / C), c = k % C;
+  if (cand.via < 0) return { E: geoEntry(geo, r, c, cand.side), first: geoCenter(geo, r, c) };
+  const rk = info.root[cand.via], rr = Math.floor(rk / C), rc = rk % C;
+  return { E: geoEntry(geo, rr, rc, borderSide(rr, rc, info.R, C)), first: geoCenter(geo, rr, rc) };
+}
+function pathCost(geo, info, sx, sy, k, cand) {
+  const sp = startPoints(geo, sx, sy), P1 = sp[sp.length - 1];
+  const { E, first } = candEntry(geo, info, k, cand);
+  return Math.abs(sx - sp[0].x) + Math.abs(sy - P1.y) + trackDist(geo.T, P1, E) +
+    Math.hypot(E.x - first.x, E.y - first.y) + cand.steps * geo.cs;
+}
+// ---- 그림 안에서 걷는 길: "꺾임이 가장 적은 길" 우선, 꺾임 수가 같으면 가장 짧은 길 ----
+//  쇠똥구리는 테두리 길을 따라 걷다가, 음식과 같은 줄에서 그림 안으로 곧게 들어가는 게 기본.
+//  (빈칸 수만 세는 넓이 우선 탐색은 길이가 같은 지그재그 길을 고르고, 집에서 먼 입구로 돌아가기도 함)
+//  곧게 닿는 줄이 없을 때만 꺾고, 그때도 꺾는 횟수가 가장 적은 길을 고른다.
+//  상태 = (칸, 걷는 방향 D4 번호). 한 칸 걷기 = cs, 방향을 한 번 바꾸면 TURN_CELLS 칸을 더 걷는 것으로 침.
+//  (예전에는 꺾임을 거리보다 무조건 먼저 따져서, 한 번 꺾으면 가까운 음식도 꺾지 않는 먼 길로 빙 돌아갔음)
+const TURN_CELLS = 3;
+const turnCost = cs => TURN_CELLS * cs;
+// ---- 사분면 규칙: 위쪽 변으로 들어갈 때는 음식이 있는 쪽(half: 1 오른쪽 절반 / -1 왼쪽 절반) 변으로 돌아감 ----
+//  (예전에는 집에서 잰 거리가 짧은 쪽으로 돌아서, 왼쪽 집은 오른쪽 위 음식도 왼쪽 변으로 돌아갔음)
+//  옆 변·아래 변 입구는 가는 길이 한쪽뿐이라 짧은 쪽 그대로. 가운데 집은 굴을 비키는 방향도 함께 고름.
+//  → { d: 집에서 입구까지 길이(고르는 기준. OPP_COST 포함), sp: 집에서 길로 올라가는 점들, P1: 길에 올라선 점, force: along 방향 }
+//  음식 반대쪽 절반에 있는 입구(오른쪽 음식인데 왼쪽 변·아래 변 왼쪽 끝 칸으로 들어가 그림을 가로지르는 길)는 OPP_COST 를 더해 맨 마지막에만 고름.
+const OPP_COST = 1e5;
+const foodHalf = (c, C) => c >= C / 2 ? 1 : -1;
+function approach(geo, sx, sy, E, s, half) {
+  const T = geo.T, P = 2 * (T.x1 - T.x0) + 2 * (T.y1 - T.y0);
+  const force = s === 'T' ? -half : 0;   // 길 번호는 시계 방향으로 커짐: 아래 변에서 오른쪽 변으로 가는 건 -1
+  const center = Math.abs(sx - HOLE.x) < HOLE_DETOUR;
+  let best = null;
+  for (const hs of center ? [half, -half] : [0]) {
+    const sp = startPoints(geo, sx, sy, hs), P1 = sp[sp.length - 1];
+    let d;
+    if (force) { const t = ((trackParam(T, E.x, E.y) - trackParam(T, P1.x, P1.y)) % P + P) % P; d = force > 0 ? t : (P - t) % P; }
+    else d = trackDist(T, P1, E);
+    d += Math.abs(sx - sp[0].x) + Math.abs(sy - P1.y);
+    // 음식 반대쪽 절반의 입구(변이 위·아래·옆 어디든)는 다른 길이 없을 때만
+    // (예전에는 옆 변만 막아서, 아래 변 맨 끝 칸으로 들어가 그림 안을 가로지르는 길이 1사분면 음식도 왼쪽으로 돌게 했음)
+    if (half > 0 ? E.x < (T.x0 + T.x1) / 2 : E.x >= (T.x0 + T.x1) / 2) d += OPP_COST;
+    if (!best || d < best.d - 0.01) best = { d, sp, P1, force };
+  }
+  return best;
+}
+const SIDE_IN = { T: 0, B: 1, L: 2, R: 3 };   // 그 변에서 그림 안으로 들어가는 방향 (D4 번호). 나가는 방향은 ^1
+function borderSides(r, c, R, C) {
+  const s = [];
+  if (r === 0) s.push('T');
+  if (r === R - 1) s.push('B');
+  if (c === 0) s.push('L');
+  if (c === C - 1) s.push('R');
+  return s;
+}
+// sources: [{ k, dir, d }] 에서 출발해 빈칸(open(n))만 밟고 가는 최소 비용. dist/par 는 칸*4+방향 색인
+function turnSearch(R, C, cs, open, sources) {
+  const N = R * C, dist = new Float64Array(N * 4).fill(Infinity), par = new Int32Array(N * 4).fill(-1);
+  const heap = [];   // [비용, 상태] 최소 힙
+  const push = (d, s) => {
+    let i = heap.length; heap.push([d, s]);
+    while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; }
+  };
+  const pop = () => {
+    const top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ;) {
+        const l = 2 * i + 1, r = l + 1; let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]]; i = m;
+      }
+    }
+    return top;
+  };
+  for (const s of sources) { const st = s.k * 4 + s.dir; if (s.d < dist[st]) { dist[st] = s.d; push(s.d, st); } }
+  while (heap.length) {
+    const [d, st] = pop();
+    if (d > dist[st]) continue;
+    const k = st >> 2, dir = st & 3, r = Math.floor(k / C), c = k % C;
+    for (let e = 0; e < 4; e++) {
+      if (e === (dir ^ 1)) continue;   // 왔던 길로 되돌아가지 않음
+      const nr = r + D4[e][0], nc = c + D4[e][1];
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C) continue;
+      const n = nr * C + nc;
+      if (!open(n)) continue;
+      const nd = d + cs + (e === dir ? 0 : turnCost(cs)), ns = n * 4 + e;
+      if (nd < dist[ns]) { dist[ns] = nd; par[ns] = st; push(nd, ns); }
+    }
+  }
+  return { dist, par };
+}
+// 집(sx, sy)에서 출발해 테두리 길을 걷고 입구로 들어와 그림 속 빈칸까지 가는 비용 지도 (reachMap 결과마다 한 번만 계산)
+function routeField(geo, info, sx, sy, half) {
+  const cache = info.fields || (info.fields = new Map()), key = sx + ',' + sy + ',' + half;
+  if (cache.has(key)) return cache.get(key);
+  const R = info.R, C = info.C;
+  const src = [];
+  for (let k = 0; k < R * C; k++) {
+    if (info.dist[k] !== 0) continue;   // 테두리에 붙은 빈칸 = 입구
+    const r = Math.floor(k / C), c = k % C, p = geoCenter(geo, r, c);
+    for (const s of borderSides(r, c, R, C)) {
+      const E = geoEntry(geo, r, c, s);
+      src.push({ k, dir: SIDE_IN[s], d: approach(geo, sx, sy, E, s, half).d + Math.hypot(E.x - p.x, E.y - p.y) });
+    }
+  }
+  const f = turnSearch(R, C, geo.cs, n => info.dist[n] >= 0, src);
+  cache.set(key, f);
+  return f;
+}
+// 음식 k까지 가는 가장 좋은 길 고르기 → { cost, cand, state } (state: 음식 바로 앞 칸의 탐색 상태, 테두리에서 바로 집으면 -1)
+function routePick(geo, info, f, sx, sy, k, half) {
+  const C = info.C, r = Math.floor(k / C), c = k % C;
+  let best = null;
+  for (const cand of info.acc.get(k)) {
+    if (cand.via < 0) {
+      const { E, first } = candEntry(geo, info, k, cand);
+      const cost = approach(geo, sx, sy, E, cand.side, half).d + Math.hypot(E.x - first.x, E.y - first.y);
+      if (!best || cost < best.cost) best = { cost, cand, state: -1 };
+      continue;
+    }
+    const n = cand.via, dr = r - Math.floor(n / C), dc = c - n % C;
+    const dk = D4.findIndex(([a, b]) => a === dr && b === dc);   // 앞 칸에서 음식 쪽 방향
+    for (let dir = 0; dir < 4; dir++) {
+      const cost = f.dist[n * 4 + dir] + geo.cs + (dir === dk ? 0 : turnCost(geo.cs));
+      if (cost < Infinity && (!best || cost < best.cost)) best = { cost, cand, state: n * 4 + dir };
+    }
+  }
+  return best;
+}
+// 실제 이동 경로: 갈 때 꺾임점들 + 돌아올 때 쓸 안쪽 길
+function makePath(sx, sy, k, pick, half) {
+  const info = game.reach, C = info.C, T = game.T;
+  const inner = [];   // 길 → 음식 사이 빈칸 중심들
+  let E, side;
+  if (pick.state >= 0) {
+    const f = routeField(game, info, sx, sy, half), chain = [];
+    for (let st = pick.state; st >= 0; st = f.par[st]) chain.push(st);
+    chain.reverse();
+    const e = chain[0] >> 2;
+    side = 'TBLR'[chain[0] & 3];
+    E = geoEntry(game, Math.floor(e / C), e % C, side);
+    for (const st of chain) inner.push(geoCenter(game, Math.floor((st >> 2) / C), (st >> 2) % C));
+  } else { E = candEntry(game, info, k, pick.cand).E; side = pick.cand.side; }
+  const [tx, ty] = cellCenter(Math.floor(k / C), k % C);
+  const ap = approach(game, sx, sy, E, side, half);
+  const go = simplify([...ap.sp, ...along(T, ap.P1, E, ap.force), ...inner, { x: tx, y: ty }]);
+  return { go, E, inner };
+}
+// 일직선 위의 중간 점은 빼서 꺾이는 곳만 남김
+function simplify(pts) {
+  const out = [];
+  for (const p of pts) {
+    if (out.length && Math.hypot(out[out.length - 1].x - p.x, out[out.length - 1].y - p.y) < 0.01) continue;
+    if (out.length >= 2) {
+      const a = out[out.length - 2], b = out[out.length - 1];
+      if (Math.abs((b.x - a.x) * (p.y - b.y) - (b.y - a.y) * (p.x - b.x)) < 0.01) out.pop();
+    }
+    out.push(p);
+  }
+  return out;
+}
+// 굴로 돌아가는 길: 가까운 쪽으로 돌아감 (분산은 음식을 왼쪽·오른쪽 번갈아 고르는 것으로 함)
+// 굴 앞에서는 들어오는 쪽(왼쪽/오른쪽)에 따라 자리를 나눠 들어감
+// 두 방향의 실제 길이를 재서 짧은 쪽을 고름 (굴 바로 앞에서 음식을 들고 나와도 테두리를 한 바퀴 돌지 않게)
+// 나가는 곳도 들어온 곳에 묶이지 않음: 음식을 집은 순간의 그림에서 빈 길을 다시 찾아
+// "그림 밖으로 나가는 거리 + 테두리를 따라 굴까지 거리"가 가장 짧은 출구로 나감
+// (들어올 때는 막혀 있던 가까운 길이 그사이 다른 쇠똥구리가 음식을 먹어 열렸을 수도 있음)
+const pathLen = pts => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); return s; };
+function trackToHole(E) {
+  const T = game.T;
+  // 굴 바로 위(두 진입 지점 사이)로 나왔으면 테두리를 돌지 않고 곧장 굴로 들어감
+  // (안 그러면 어느 방향이든 진입 지점이 등 뒤에 있어서 그림을 한 바퀴 빙 돌아옴)
+  if (Math.abs(E.y - T.y1) < 0.5 && Math.abs(E.x - HOLE.x) < 12) {
+    const side = E.x >= HOLE.x ? 1 : -1;
+    const pts = [E, { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  }
+  const route = dir => {
+    // 시계 방향(바닥 길을 오른쪽에서 왼쪽으로)은 굴 오른쪽으로, 반시계는 왼쪽으로 들어감
+    const side = dir > 0 ? 1 : -1;
+    const pts = [E, ...along(T, E, { x: HOLE.x + side * 12, y: T.y1 }, dir), { x: HOLE.x + side * 6, y: HOLE.y - 2 }, { x: HOLE.x, y: HOLE.y }];
+    return { pts, len: pathLen(pts) };
+  };
+  const a = route(1), b = route(-1);
+  return a.len <= b.len ? a : b;
+}
+function backPath(cr) {
+  const g = game, R = g.R, C = g.C, N = R * C, start = cr.r * C + cr.c;
+  // 집은 자리에서 빈칸을 따라 탐색 (갈 때와 같은 규칙: 꺾임 한 번 = TURN_CELLS 칸 → 웬만하면 테두리까지 곧게 나감)
+  const f = turnSearch(R, C, g.cs, n => !g.grid[Math.floor(n / C)][n % C], [0, 1, 2, 3].map(dir => ({ k: start, dir, d: 0 })));
+  // 가장자리 칸마다 바깥 길로 나가 굴까지 가는 길이를 재서 가장 좋은 출구 선택
+  let best = null;
+  for (let k = 0; k < N; k++) {
+    const r = Math.floor(k / C), c = k % C;
+    for (const s of borderSides(r, c, R, C)) {
+      let E = null, p, tr;
+      for (let dir = 0; dir < 4; dir++) {
+        const d = f.dist[k * 4 + dir];
+        if (d === Infinity) continue;
+        if (!E) { E = geoEntry(g, r, c, s); p = geoCenter(g, r, c); tr = trackToHole(E); }
+        const len = d + (dir === (SIDE_IN[s] ^ 1) ? 0 : turnCost(g.cs)) + Math.hypot(E.x - p.x, E.y - p.y) + tr.len;
+        if (!best || len < best.len) best = { st: k * 4 + dir, tr, len };
+      }
+    }
+  }
+  if (!best) return simplify([...cr.inner.slice().reverse(), ...trackToHole(cr.E).pts]);   // 만일을 위한 예전 길
+  const chain = [];
+  for (let st = best.st; st >= 0 && (st >> 2) !== start; st = f.par[st]) chain.push(geoCenter(g, Math.floor((st >> 2) / C), (st >> 2) % C));
+  chain.reverse();
+  return simplify([{ x: cr.x, y: cr.y }, ...chain, ...best.tr.pts]);
+}
+
+// 가져올 음식 고르기: side가 -1이면 그림 왼쪽 절반, 1이면 오른쪽 절반에서 가장 가까운 음식.
+// 그쪽에 닿을 수 있는 음식이 없으면 반대쪽에서 고름.
+// 일터마다 왼쪽·오른쪽을 번갈아 고르면 음식이 양쪽에서 고르게 사라지고 쇠똥구리도 자연스럽게 나뉨
+function findTarget(color, sx, sy, side = 0) {
+  const info = game.reach, half = game.C / 2;
+  let best = null, bd = 1e9, alt = null, ad = 1e9;
+  for (const [k, cands] of info.acc) {
+    const r = Math.floor(k / game.C), c = k % game.C;
+    if (game.grid[r][c] !== color || game.reserved[r][c] || game.ice.has(k)) continue;
+    const mine = !side || (side < 0 ? c < half : c >= half);
+    for (const cand of cands) {
+      const d = pathCost(game, info, sx, sy, k, cand);
+      if (mine) { if (d < bd) { bd = d; best = { k, r, c, cand }; } }
+      else if (d < ad) { ad = d; alt = { k, r, c, cand }; }
+    }
+  }
+  best = best || alt;
+  if (best) {
+    // 어느 음식을 고를지는 스테이지 생성·밸런스 시뮬과 같은 pathCost로 정하고 (먹는 순서 = 난이도가 바뀌지 않게),
+    // 그 음식까지 "어떻게 갈지"는 사분면 규칙(음식이 있는 쪽 변으로 돌아감) + 테두리에서 곧게 들어가는 길로 다시 고름
+    const fh = foodHalf(best.c, game.C);
+    const pick = routePick(game, info, routeField(game, info, sx, sy, fh), sx, sy, best.k, fh);
+    best.cand = pick.cand;
+    best.path = makePath(sx, sy, best.k, pick, fh);
+  }
+  return best;
+}
+/* ===== 확인판 ===== */
+const W = 420;
+let R = 6, C = 8, grid, fixed = null, mode = 'food', go = [], back = [], target = null, anim = null;
+const game = {};
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d'), info = document.getElementById('info');
+const $ = id => document.getElementById(id);
+let iceArr = [], resvArr = null;
+function setup(r, c) { R = r; C = c; iceArr = []; resvArr = null; grid = Array.from({ length: R }, () => Array.from({ length: C }, () => 'f')); }
+function preset(n) {
+  setup(+$('R').value, +$('C').value);
+  const e = (r, c) => { if (r >= 0 && c >= 0 && r < R && c < C) grid[r][c] = null; };
+  if (n === 1) {
+    fixed = { r: 2, c: 5 };
+    for (let r = 0; r <= 1; r++) e(r, 5);
+    for (let c = 0; c <= 4; c++) e(2, c);
+  } else if (n === 2) {
+    fixed = { r: 3, c: 6 };
+    for (let r = 0; r <= 2; r++) e(r, 6);
+    for (let c = 0; c <= 5; c++) e(2, c);
+  } else if (n === 3) {
+    fixed = { r: 2, c: 3 };
+    for (let r = 3; r < R; r++) e(r, 3);
+  }
+  recompute();
+}
+const turnsOf = p => { let t = 0; for (let i = 1; i < p.length - 1; i++) { const a = p[i - 1], b = p[i], c = p[i + 1]; if (Math.abs((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)) > 0.01) t++; } return t; };
+function recompute() {
+  Object.assign(game, geometry(R, C), { R, C, grid, ice: new Set(iceArr), reserved: grid.map((row, r) => row.map((_, c) => !!(resvArr && resvArr[r] && resvArr[r][c]))) });
+  game.reach = reachMap(grid);
+  const h = homePos(+$('home').value), side = +$('side').value;
+  go = []; back = []; target = null; anim = null;
+  let t = null, why = '';
+  if (fixed && grid[fixed.r][fixed.c] && game.reach.acc.has(fixed.r * C + fixed.c)) {
+    const k = fixed.r * C + fixed.c, fh = foodHalf(fixed.c, C);
+    const pick = routePick(game, game.reach, routeField(game, game.reach, h.x, h.y, fh), h.x, h.y, k, fh);
+    if (pick) t = { k, r: fixed.r, c: fixed.c, path: makePath(h.x, h.y, k, pick, fh) };
+  } else {
+    if (fixed) why = '(지정한 음식이 없거나 닿을 수 없어서 자동으로 고름)\n';
+    t = findTarget('f', h.x, h.y, side);
+  }
+  if (!t) { draw(); info.textContent = '닿을 수 있는 음식이 없어요 (길이 막힘)'; return; }
+  target = { r: t.r, c: t.c };
+  go = [{ x: h.x, y: h.y }, ...t.path.go];
+  // 음식을 먹은 뒤의 그림에서 돌아오는 길 계산 (게임과 같은 순서)
+  const g2 = grid.map(r => r.slice()); g2[t.r][t.c] = null;
+  game.grid = g2; game.reach = reachMap(g2);
+  const p = cellCenter(t.r, t.c);
+  back = backPath({ r: t.r, c: t.c, x: p[0], y: p[1], inner: t.path.inner, E: t.path.E });
+  game.grid = grid;
+  draw();
+  const gl = pathLen(go), bl = pathLen(back);
+  info.textContent = why + `그림 ${R}×${C}, 칸 ${game.cs}px · 집 ${(+$('home').value) + 1}번\n목표 음식: ${t.r}행 ${t.c}열\n` +
+    `[가는 길] ${gl.toFixed(0)}px (${(gl / game.cs).toFixed(1)}칸) · 꺾이는 곳 ${turnsOf(go)}번\n  ` + go.map(q => `(${q.x.toFixed(0)},${q.y.toFixed(0)})`).join('→') +
+    `\n[돌아오는 길] ${bl.toFixed(0)}px (${(bl / game.cs).toFixed(1)}칸) · 꺾이는 곳 ${turnsOf(back)}번\n  ` + back.map(q => `(${q.x.toFixed(0)},${q.y.toFixed(0)})`).join('→');
+}
+function line(p, color, w, dash) {
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineJoin = 'round'; ctx.setLineDash(dash || []); ctx.beginPath();
+  p.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+}
+function dots(p, color) { ctx.fillStyle = '#fff'; ctx.strokeStyle = color; p.forEach(q => { ctx.beginPath(); ctx.arc(q.x, q.y, 3.2, 0, 7); ctx.fill(); ctx.stroke(); }); }
+function draw(pos) {
+  ctx.clearRect(0, 0, 420, 560);
+  ctx.fillStyle = '#b7a06e'; ctx.fillRect(0, GROUND_Y_, 420, 560 - GROUND_Y_);
+  const cs = game.cs;
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    const x = game.gx + c * cs, y = game.gy + r * cs;
+    if (target && r === target.r && c === target.c) { ctx.fillStyle = '#EF9F27'; ctx.fillRect(x + 1, y + 1, cs - 2, cs - 2); }
+    else if (grid[r][c]) { ctx.fillStyle = '#a0552d'; ctx.fillRect(x + 1, y + 1, cs - 2, cs - 2); }
+    else { ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.strokeRect(x + .5, y + .5, cs - 1, cs - 1); }
+    if (grid[r][c] && game.ice.has(r * C + c)) { ctx.fillStyle = 'rgba(159,216,255,.75)'; ctx.fillRect(x + 4, y + 4, cs - 8, cs - 8); }
+    if (grid[r][c] && game.reserved[r][c]) { ctx.strokeStyle = '#8e44ad'; ctx.setLineDash([3, 2]); ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); ctx.setLineDash([]); }
+    if (fixed && fixed.r === r && fixed.c === c && grid[r][c]) { ctx.strokeStyle = '#185FA5'; ctx.lineWidth = 2; ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); ctx.lineWidth = 1; }
+  }
+  const T = game.T;
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = '#888'; ctx.strokeRect(T.x0, T.y0, T.x1 - T.x0, T.y1 - T.y0); ctx.setLineDash([]);
+  ctx.fillStyle = '#2c2c2a'; ctx.beginPath(); ctx.ellipse(HOLE.x, HOLE.y + 4, 22, 9, 0, 0, 7); ctx.fill();
+  for (let i = 0; i < 5; i++) {
+    const h = homePos(i); ctx.fillStyle = i === +$('home').value ? '#185FA5' : '#7a6a45';
+    ctx.beginPath(); ctx.arc(h.x, h.y, 7, 0, 7); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(i + 1, h.x, h.y + 3.5);
+  }
+  if (go.length) { line(go, 'rgba(24,95,165,.65)', 6); }
+  if (back.length) { line(back, '#0F6E56', 2.5); }
+  if (go.length) dots(go, '#185FA5');
+  if (back.length) dots(back, '#0F6E56');
+  if (pos) { ctx.fillStyle = pos.back ? '#c0392b' : '#185FA5'; ctx.beginPath(); ctx.arc(pos.x, pos.y, 6, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
+}
+function play() {
+  const all = [...go, ...back.slice(1)], gl = pathLen(go), total = pathLen(all);
+  let d = 0, last = performance.now(); const id = anim = {};
+  (function tick(now) {
+    if (anim !== id) return;
+    d += (now - last) * 0.25; last = now;
+    if (d >= total) { draw(); return; }
+    let rem = d;
+    for (let i = 1; i < all.length; i++) {
+      const L = Math.hypot(all[i].x - all[i - 1].x, all[i].y - all[i - 1].y);
+      if (rem <= L) { const t = L ? rem / L : 0; draw({ x: all[i - 1].x + (all[i].x - all[i - 1].x) * t, y: all[i - 1].y + (all[i].y - all[i - 1].y) * t, back: d > gl }); break; }
+      rem -= L;
+    }
+    requestAnimationFrame(tick);
+  })(last);
+}
+cv.addEventListener('click', e => {
+  const b = cv.getBoundingClientRect(), s = 420 / b.width;
+  const x = (e.clientX - b.left) * s, y = (e.clientY - b.top) * s;
+  for (let i = 0; i < 5; i++) { const h = homePos(i); if (Math.hypot(x - h.x, y - h.y) < 14) { setHome(i); return; } }
+  const c = Math.floor((x - game.gx) / game.cs), r = Math.floor((y - game.gy) / game.cs);
+  if (r < 0 || c < 0 || r >= R || c >= C) return;
+  if (mode === 'target') { fixed = (fixed && fixed.r === r && fixed.c === c) ? null : (grid[r][c] ? { r, c } : fixed); }
+  else { grid[r][c] = grid[r][c] ? null : 'f'; }
+  recompute();
+});
+const setMode = m => { mode = m; $('mFood').classList.toggle('on', m === 'food'); $('mTarget').classList.toggle('on', m === 'target'); };
+$('mFood').onclick = () => setMode('food'); $('mTarget').onclick = () => setMode('target');
+$('reset').onclick = () => { setup(+$('R').value, +$('C').value); if (fixed && (fixed.r >= R || fixed.c >= C)) fixed = null; recompute(); };
+function setHome(i) {
+  $('home').value = i;
+  document.querySelectorAll('#homeBtns button').forEach((b, k) => b.classList.toggle('on', k === i));
+  recompute();
+}
+for (let i = 0; i < 5; i++) { const b = document.createElement('button'); b.textContent = i + 1; b.onclick = () => setHome(i); $('homeBtns').appendChild(b); }
+$('homeBtns').children[2].classList.add('on');
+$('side').onchange = recompute;
+// ---- 게임의 load 치트에서 현재 그림을 받아 옴 ----
+const inGame = window.parent !== window;
+const closeViewer = () => { if (inGame) parent.postMessage({ type: 'bb-viewer-close' }, '*'); };
+if (inGame) { $('closeV').style.display = ''; $('closeV').onclick = closeViewer; }
+window.addEventListener('message', e => {
+  const m = e.data;
+  if (!m || m.type !== 'bb-load') return;
+  $('R').value = m.grid.length; $('C').value = m.grid[0].length;
+  setup(m.grid.length, m.grid[0].length);
+  grid = m.grid.map(row => row.map(v => v ? 'f' : null));
+  iceArr = m.ice || []; resvArr = m.reserved || null; fixed = null;
+  $('fromGame').style.display = '';
+  recompute();
+});
+let vk = '';
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.key.length !== 1) return;
+  vk = (vk + e.key.toLowerCase()).slice(-4);
+  if (vk === 'load') { vk = ''; closeViewer(); }
+});
+document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => preset(+b.dataset.p));
+$('play').onclick = play;
+const GROUND_Y_ = 530;
+preset(1);
+</script></body></html>

@@ -28,8 +28,8 @@
   }
 
   // ---- 2. 스테이지 생성 일관성 ----
-  function testGeneration() {
-    for (let i = 0; i < BASE_COUNT; i++) {
+  function testGeneration(from = 0, to = BASE_COUNT) {
+    for (let i = from; i < to; i++) {
       const d = buildStage(i);
       const cells = {}, ants = {};
       d.grid.forEach(r => r.forEach(v => { if (v) cells[v] = (cells[v] || 0) + 1; }));
@@ -353,17 +353,16 @@
     for (const p of policies) { let f = 0; for (let s = 0; s < n; s++) if (lessonRun(i, p, s * 31 + 7) !== 'clear') f++; out[p + 'Fail'] = +(f / n).toFixed(2); }
     return out;
   }
-  function testLessons(n) {
-    for (let i = 0; i < BASE_COUNT; i++) {
-      const q = STAGES[i].qa && STAGES[i].qa.engine;
-      if (!q) continue;
-      const keys = Object.keys(q).filter(k => k.endsWith('Fail'));
-      const r = lessonStat(i, n, keys.map(k => k.slice(0, -4)));
-      const inR = (v, a) => !a || (v >= a[0] - 1e-9 && v <= a[1] + 1e-9);
-      for (const k of keys)
-        check(`스테이지 ${i + 1} 레슨(엔진) ${k} ${JSON.stringify(q[k] || '-')}`, inR(r[k], q[k]), JSON.stringify(r));
-    }
+  // 레슨(엔진) 목표가 있는 스테이지 번호들
+  const lessonStages = () => STAGES.map((s, i) => i).filter(i => i < BASE_COUNT && STAGES[i].qa && STAGES[i].qa.engine);
+  const lessonKeys = i => Object.keys(STAGES[i].qa.engine).filter(k => k.endsWith('Fail'));
+  function checkLesson(i, r) {
+    const q = STAGES[i].qa.engine;
+    const inR = (v, a) => !a || (v >= a[0] - 1e-9 && v <= a[1] + 1e-9);
+    for (const k of lessonKeys(i))
+      check(`스테이지 ${i + 1} 레슨(엔진) ${k} ${JSON.stringify(q[k] || '-')}`, inR(r[k], q[k]), JSON.stringify(r));
   }
+  function testLessons(n) { for (const i of lessonStages()) checkLesson(i, lessonStat(i, n, lessonKeys(i).map(k => k.slice(0, -4)))); }
 
   async function run(opt = {}) {
     results.length = 0;
@@ -371,21 +370,33 @@
     for (const k of ['antPuzzleCleared', 'antPuzzleLast', 'antPuzzleSpeed', 'antPuzzleMode', 'antPuzzleBoosters']) backup[k] = store.get(k);
     const keep = { cleared, lastStage, speed, mode, inv: { ...inventory } };
     const errors = [];
-    const step = async (name, fn) => { try { fn(); } catch (e) { errors.push(name + ': ' + (e && e.stack || e)); check(`${name} 예외 없음`, false, e && e.message); } await new Promise(r => setTimeout(r, 0)); };
+    const timings = [];   // 단계별 걸린 시간 (ms) — 페이지를 오래 붙잡는 단계 찾기용
+    const step = async (name, fn) => {
+      const t0 = performance.now();
+      try { fn(); } catch (e) { errors.push(name + ': ' + (e && e.stack || e)); check(`${name} 예외 없음`, false, e && e.message); }
+      timings.push([name, Math.round(performance.now() - t0)]);
+      await new Promise(r => setTimeout(r, 0));
+    };
     await step('밸런스 표', testBalanceTable);
-    if (opt.generation !== false) await step('스테이지 생성', testGeneration);
+    // 스테이지 생성도 52개를 한 번에 돌리면 약 19초 멈추므로 10개씩 나눔
+    if (opt.generation !== false) for (let s = 0; s < BASE_COUNT; s += 10) await step(`스테이지 생성 ${s + 1}~`, () => testGeneration(s, Math.min(BASE_COUNT, s + 10)));
     const play = opt.play || STAGES.map((s, i) => i).filter(i => i < BASE_COUNT && (i < 3 || STAGES[i].tier === 'hard' || STAGES[i].tier === 'boss'));
     for (const i of play) await step(`엔진 ${i + 1}`, () => testEngine([i]));
     await step('부스터', testBoosters);
     await step('기믹', testGimmicks);
     await step('보상', testRewards);
-    if (opt.lessons !== false) await step('레슨', () => testLessons(opt.lessonRuns || 8));
+    // 레슨은 실행이 수백 번이라 스테이지·정책마다 나눠서 돌림 (한 번에 돌리면 몇 분 동안 페이지가 멈춤)
+    if (opt.lessons !== false) for (const i of lessonStages()) {
+      const r = {};
+      for (const k of lessonKeys(i)) await step(`레슨 ${i + 1} ${k}`, () => Object.assign(r, lessonStat(i, opt.lessonRuns || 8, [k.slice(0, -4)])));
+      checkLesson(i, r);
+    }
     // 복구
     for (const k in backup) if (backup[k] != null) store.set(k, backup[k]);
     cleared = keep.cleared; lastStage = keep.lastStage; speed = keep.speed; mode = keep.mode; inventory = keep.inv; saveInventory(); saveProgress();
     goMenu();
     const failed = results.filter(r => !r.ok);
-    return { total: results.length, passed: results.length - failed.length, failed, errors };
+    return { total: results.length, passed: results.length - failed.length, failed, errors, timings };
   }
 
   window.FunctionalQA = { run, countInvariant, borderHits, runEngine, lessonRun, lessonStat, testLessons, results };

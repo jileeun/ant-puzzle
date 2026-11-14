@@ -237,6 +237,7 @@
 - 스테이지는 순서대로 열림 (`antPuzzleCleared`). 마지막 스테이지 이어하기.
 - 저장 키: `antPuzzleCleared`, `antPuzzleLast`, `antPuzzleSpeed`, `antPuzzleMode`, `antPuzzleBoosters`.
 - 치트: PC `open` 입력 / 폰 제목 5번 톡톡 → 모든 스테이지 열기 (진행도는 그대로).
+- 치트: 스테이지 중 `load` 입력(폰은 같은 입력창) → 지금 그림으로 경로 확인판(`qa/backpath-viewer.html`)을 띄움. 다시 `load` 하면 끔.
 
 ## 8. 온라인
 - 협동: 번갈아 고름. 방장이 게임을 돌리고 손님에게 0.1초마다 상태 전송.
